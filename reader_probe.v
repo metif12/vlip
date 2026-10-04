@@ -78,8 +78,8 @@ fn main() {
 			}
 		}
 
-		limit := if lines.len > 16 {
-			16
+		limit := if lines.len > 60 {
+			60
 		} else {
 			lines.len
 		}

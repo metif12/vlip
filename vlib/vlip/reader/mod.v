@@ -138,31 +138,63 @@ pub fn (mut a Arena) float_leaf(f f64) NodeId {
 	return NodeId(a.nodes.len - 1)
 }
 
-// node opens a collection node; call add_child for each element, then close.
+// open creates a collection node with no children yet. The children are
+// attached later by finish().
+//
+// open must NOT record a child offset. A nested list finishes its own children
+// before the enclosing list appends its next child, so an offset captured at open
+// time points into the middle of the inner list's children. That bug made
+// `(+ (+ 1 2) (+ 3 4))` read as a flat `(+ + 1)`.
 pub fn (mut a Arena) open(tag DatumTag) NodeId {
 	a.nodes << Datum{
-		tag:   tag
-		start: i32(a.children.len)
-		count: 0
+		tag: tag
 	}
 	return NodeId(a.nodes.len - 1)
 }
 
+// finish appends a node's children as one contiguous run and records where it
+// began. Appending the run at the END, rather than interleaving with whatever a
+// nested node appended meanwhile, is what makes (start, count) a valid range.
+pub fn (mut a Arena) finish(id NodeId, items []NodeId) {
+	start := i32(a.children.len)
+	for it in items {
+		a.children << it
+	}
+	mut node := &a.nodes[int(id)]
+	node.start = start
+	node.count = i32(items.len)
+}
+
+// add_child appends a single child immediately. Only safe when the parent has no
+// nested children yet; finish() is the general case.
 pub fn (mut a Arena) add_child(parent NodeId, child NodeId) {
 	a.children << child
-	a.nodes[int(parent)].count++
+	mut node := &a.nodes[int(parent)]
+	node.count++
+	node.start = int(node.start)
 }
 
 pub fn (a &Arena) node(id NodeId) &Datum {
 	return &a.nodes[int(id)]
 }
 
+// kids returns a COPY of a node's children.
+//
+// The machine evaluates a form, transforms it into new arena nodes, and then
+// reads its children again. If kids returned a view into the shared children
+// slice, the append performed by the transform would reallocate that slice and
+// leave the caller holding a dangling reference. Copying is cheap next to the
+// failure mode it removes.
 pub fn (a &Arena) kids(id NodeId) []NodeId {
 	d := a.nodes[int(id)]
-	if d.count == 0 {
-		return []NodeId{}
+	mut out := []NodeId{}
+	n := int(d.start)
+	mut i := 0
+	for i < int(d.count) {
+		out << a.children[n + i]
+		i++
 	}
-	return a.children[int(d.start)..int(d.start + d.count)]
+	return out
 }
 
 pub fn (a &Arena) count() int {
@@ -185,8 +217,8 @@ pub fn (d &Diagnostic) render(path string) string {
 pub struct Reader {
 pub:
 	src    string
-	arena  &Arena
 mut:
+	arena  &Arena
 	off     int
 	line    int = 1
 	line_at int
@@ -347,6 +379,7 @@ tag := match c {
 
 fn (mut r Reader) read_collection(tag DatumTag, close u8) ?NodeId {
 	id := r.arena.open(tag)
+	mut items := []NodeId{}
 	for {
 		r.skip_ws()
 		if r.eof() {
@@ -361,11 +394,14 @@ fn (mut r Reader) read_collection(tag DatumTag, close u8) ?NodeId {
 		child := r.read() or {
 			break
 		}
-		if r.off == before {
+if r.off == before {
 			break
 		}
-		r.arena.add_child(id, child)
+		items << child
 	}
+	// Children are gathered locally and attached as one contiguous run, so a
+	// nested list's children cannot end up interleaved with this node's.
+	r.arena.finish(id, items)
 	return id
 }
 
