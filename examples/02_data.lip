@@ -1,0 +1,89 @@
+;; examples/02_data.lip
+;; Data: what a value can be, and how it prints.
+;;
+;; The brackets tell you the type. No predicate is needed to know what you have,
+;; and the @ prefix makes mutability visible without a type annotation.
+
+;; --- lists: the universal sequence ---
+'(1 2 3)                    ; cons cells
+(list 1 2 3)                ;=> (1 2 3)
+(list)                      ;=> ()
+
+(car '(1 2 3))              ;=> 1
+(cdr '(1 2 3))              ;=> (2 3)
+(cons 0 '(1))               ;=> (0 1)
+(null? '())                 ;=> #t
+(length '(1 2 3))           ;=> 3
+(reverse '(1 2 3))          ;=> (3 2 1)
+(append '(1) '(2 3))        ;=> (1 2 3)
+
+;; lists are immutable sequences; there is no push! on them
+
+;; --- vectors: dense, indexable, immutable ---
+[1 2 3]
+(vector-ref [10 20 30] 1)   ;=> 20
+(vector-length [1 2 3])     ;=> 3
+(vector-append [1] [2])     ;=> [1 2]
+(-> [1 2 3] vector-map (fn [x] (* x 10)) vector-rev)  ;=> [30 20 10]
+
+;; --- tables: immutable hash maps, keyed by keyword ---
+{:name "ada" :born 1815}
+(get {:a 1} :a)             ;=> 1
+(get {:a 1} :missing)       ;=> nil      absent is nil, not an error
+(get {:a 1} :missing 'def)  ;=> "def"    with a default
+(put {:a 1} :b 2)           ;=> {:a 1 :b 2}
+(remove {:a 1} :a)          ;=> {}
+(has-key? {:a 1} :a)        ;=> #t
+(-> {:a 1 :b 2} table-keys sort)  ;=> (:a :b)
+
+;; --- arrays: dense, mutable. The @ says so. ---
+@(1 2 3)
+(def arr @(1 2 3))
+(array-set! arr 0 99)       ; returns nothing; mutates in place
+(array-ref arr 0)           ;=> 99
+(array-push! arr 4)         ;=> arr, now length 4
+(array-length arr)          ;=> 4
+
+;; --- buffers: mutable hash map ---
+(def buf @{:count 0})
+(put! buf :count (+ (get buf :count) 1))   ;=> nothing
+(get buf :count)                          ;=> 1
+
+;; --- every collection is callable ---
+;; A table or struct used in function position looks up a key. This is the one
+;; rule that deletes the most noise:
+(get {:a 1} :a)         ; ordinary
+(:a {:a 1})             ; same thing, shorter
+(:missing {:a 1})       ;=> nil
+
+;; --- strings ---
+(string-append "foo" "bar")     ;=> "foobar"
+(string-length "hello")         ;=> 5
+(string-split "a,b,c" ",")      ;=> ("a" "b" "c")
+(string-trim "  x  ")           ;=> "x"
+(string-downcase "ABC")         ;=> "abc"
+(string-upcase "abc")           ;=> "ABC"
+(string-index-of "hello" 'l)    ;=> 2
+(string? "x")                  ;=> #t
+(string->number "42")           ;=> 42
+(number->string 42)             ;=> "42"
+(format "~a and ~a" 1 "two")    ;=> "1 and two"
+
+;; --- predicates ---
+(integer? 1)   (float? 1.0)   (number? 1)
+(string? "")   (symbol? 'a)   (keyword? :a)
+(list? '())    (vector? [])    (table? {})     (array? @[])
+(zero? 0)      (positive? 1)  (negative? -1)
+(even? 2)      (odd? 3)
+
+;; --- equality: = is value equality on contents ---
+(= '(1 2) '(1 2))       ;=> #t    not identity
+(= [1 2] [1 2])         ;=> #t
+(= {:a 1} {:a 1})       ;=> #t
+(eq? 'a 'a)             ;=> #t    identity, for symbols
+
+;; print shows structure, so a wrong value is visible immediately
+(print '(1 "two" :three))
+(print [1 2 3])
+(print {:a 1 :b [2 3]})
+(print "data ok")

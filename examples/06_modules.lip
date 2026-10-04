@@ -1,0 +1,54 @@
+;; examples/06_modules.lip
+;; Modules. The test: a program split across files, where nothing leaks and
+;; nothing collides.
+
+(provide
+  (struct-out Point)
+  distance
+  greeting
+  DEFAULT-GREETING)
+
+;; Import only what is needed. `only-in` prevents accidental coupling, and
+;; `prefix-in` prevents name collisions between two modules that both export
+;; `render`.
+(require (only-in "lib/geometry.vl" Point distance))
+(require (prefix-in geo: "lib/geometry.vl"))
+(require (only-in "lib/text.vl" greeting DEFAULT-GREETING))
+(require "lib/text.vl")            ; whole module, unprefixed
+
+(define DEFAULT-GREETING "Hello")
+
+(define (greeting name)
+  (format "~a, ~a." DEFAULT-GREETING name))
+
+;; --- resolution is file-relative ---
+;; "./x.vl" means "next to THIS file", never "in the working directory". A
+;; package can therefore never be shadowed by an unrelated file of the same
+;; name sitting in the cwd.
+;;
+;; Each module has a canonical key, so "x.vl" and "./x.vl" are recognised as
+;; one module and never loaded twice.
+
+;; --- re-exporting a struct, so consumers get the constructor and the
+;; --- accessors without importing the defining module
+(match (distance (Point 3 4) (Point 0 0))
+  [5.0 'five]
+  [_  'other])                      ;=> five
+
+(print (greeting "world"))          ;=> "Hello, world."
+
+;; =====================================================================
+;; lib/geometry.vl
+;; =====================================================================
+;; (struct Point (x y))
+;; (define (distance a b) ...)
+;; (define (area r) ...)
+
+;; =====================================================================
+;; lib/text.vl
+;; =====================================================================
+;; (define DEFAULT-GREETING "Hello")
+;; (define (greeting name) ...)
+;; (define (upper s) ...)
+
+(print "modules ok")

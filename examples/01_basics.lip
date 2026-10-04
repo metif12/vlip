@@ -1,0 +1,134 @@
+;; examples/01_basics.lip
+;; The shape of a program. Nothing exotic: this is the floor, not the ceiling.
+
+;; --- comments ---
+; a line comment
+
+#| a block comment
+   #| and it nests |#
+   still inside |#
+
+#; a datum comment: this whole form is skipped
+#;(this form is gone)
+
+;; --- literals ---
+42                ; exact integer
+3.14              ; float
+1/3               ; exact rational
+#\a               ; character
+#\newline         ; named character
+#t                ; true (and #true)
+#f                ; false (and #false)
+"a string"        ; string
+'symbol           ; a symbol, self-evaluating only if quoted
+
+;; --- the truthiness rule ---
+;; Only #f is false. Unlike Ruby and JavaScript:
+0                 ;=>  true
+""                ;=>  true
+()                ;=>  true
+#f                ;=>  false
+
+;; --- lists and quotes ---
+'(1 2 3)          ; a quoted list of three integers
+'()               ; the empty list
+'(1 (2 3) (4))    ; nesting is just nesting
+''(a)             ; quote of a list containing the symbol a
+
+;; --- arithmetic and comparison ---
+(+ 1 2 3)         ;=> 6      variadic
+(- 10 3)          ;=> 7
+(* 2 3 4)         ;=> 24
+(/ 10 4)          ;=> 2.5    exact division yields a rational when it must
+(/ 10 5)          ;=> 2
+(= 1 1 1)         ;=> #t     variadic equality
+(< 1 2 3)         ;=> #t
+(>= 3 2 1)        ;=> #t
+
+;; --- definitions ---
+(define x 10)
+(define (add a b) (+ a b))
+(define (greet name) (format "Hello, ~a." name))
+
+;; define is the whole ceremony. There is no defn, no fn=, no function keyword.
+
+;; --- recursion ---
+(define (fact n)
+  (if (<= n 1)
+      1
+      (* n (fact (- n 1)))))
+
+(fact 10)         ;=> 3628800
+
+;; --- tail calls: this must not overflow, ever ---
+;; A proper tail call reuses the frame. 1,000,000 deep is fine.
+(define (count-down n acc)
+  (if (= n 0)
+      acc
+      (count-down (- n 1) (+ acc 1))))
+
+(count-down 1000000 0)  ;=> 1000000
+
+;; Tail position is not only the last argument of `if`. These are all tail
+;; positions, and all must be optimised:
+(define (via-when n)
+  (when (> n 0)
+    (via-when (- n 1)))
+  'done)
+
+(via-when 100000)  ;=> done
+
+;; --- mutual tail recursion ---
+(define (ping n)
+  (if (= n 0) 'pong (pong (- n 1))))
+
+(define (pong n)
+  (if (= n 0) 'ping (ping (- n 1))))
+
+(ping 100000)     ;=> pong    (mutual, not just self)
+
+;; --- let family ---
+(let ([a 1] [b 2]) (+ a b))            ; parallel
+(let* ([a 1] [b (+ a 1)]) b)          ; sequential
+(letrec ([even? (lambda (n) (if (= n 0) #t (odd? (- n 1))))])
+  (even? 100))                        ; recursive binding
+
+;; --- control flow ---
+(when #t (print "when"))
+(unless #f (print "unless"))
+
+(cond [(= 1 2) 'no]
+      [(= 1 1) 'yes]
+      [else 'unreachable])
+
+;; case dispatches on values, and uses = on integers
+(case 5
+  [(1 2 3) 'low]
+  [(4 5 6) 'mid']
+  [else 'high'])
+
+;; --- and / or return the deciding value, not a boolean ---
+(and 1 2 3)       ;=> 3
+(and 1 #f 3)      ;=> #f
+(or #f #f 7)      ;=> 7
+(or)              ;=> #f
+(and)             ;=> #t
+
+;; --- loops ---
+(loop i 0 (< i 5)
+  (print i))                        ; named let
+
+(dotimes i 3 (print i))             ; zero to n-1
+
+;; --- sequencing ---
+(begin (print 1) (print 2) 'done)
+
+;; --- higher order functions ---
+(map (fn [x] (* x x)) [1 2 3])      ;=> [1 4 9]
+(filter even? [1 2 3 4])            ;=> [2 4]
+(fold + 0 [1 2 3])                  ;=> 6
+(apply + [1 2 3])                   ;=> 6
+
+((fn [a b] (+ a b)) 1 2)            ; immediately applied
+
+(print "basics ok")

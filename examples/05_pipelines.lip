@@ -1,0 +1,144 @@
+;; examples/05_pipelines.lip
+;; Pipes, labelled arguments, structs with opacity, and macros.
+;; The everyday layer: what lets a 300-line program be written with NO macros.
+
+;; =====================================================================
+;; pipelines
+;; =====================================================================
+;; Three forms, because people arrive with different muscle memory.
+
+;; ->> threads LAST: value becomes the final argument. The common case.
+(->> [1 2 3]
+     (filter odd?)
+     (map (fn [x] (* x x)))
+     (fold + 0))                 ;=> 35
+
+;; -> threads FIRST: value becomes the first argument.
+(-> {:a 2 :b 3}
+    (get :a)
+    (+ 10))                      ;=> 12
+
+;; |> is dual-mode, and doubles as a debugger.
+;; If the right side is a call, the value goes in as the FIRST argument; if it
+;; is not a call, it becomes one.
+(->> "hello" |> string-upcase |> string-length)   ;=> 5
+(->> [3 1 2] |> sort |> reverse)                  ;=> [3 2 1]
+
+;; `echo` inside a pipeline taps a value without restructuring the pipeline.
+;; This costs nothing and is the single most useful debugging feature here.
+(->> [1 2 3 4 5]
+     |> echo                   ; prints the value at this point
+     (filter odd?)
+     |> echo
+     (fold + 0))                ;=> 9
+
+;; =====================================================================
+;; labelled arguments
+;; =====================================================================
+;; Positional underneath, so this is pure sugar -- but it is the best fix for
+;; argument-order readability, and it survives reordering.
+
+(define (connect #:host [h "localhost"] #:port [p 8080] #:timeout [t 30])
+  (format "~a:~a/~as" h p t))
+
+(connect)                                    ;=> "localhost:8080/30s"
+(connect #:port 9000)                        ;=> "localhost:9000/30s"
+(connect #:timeout 5 #:host "example.com")   ; order does not matter
+
+;; =====================================================================
+;; structs
+;; =====================================================================
+
+(struct Point (x y))
+(Point 1 2)                  ;=> (Point 1 2)
+(p.x)                        ; field read: 1
+(point? (Point 1 2))         ;=> #t
+(point-x (Point 1 2))        ; accessor: 1
+
+;; immutable structs: updating returns a new value, leaving the original alone
+(define p (Point 1 2))
+(define q p.y := 99)         ; q is (Point 1 99), p is still (Point 1 2)
+
+;; #:mutable for the rare in-place case
+(struct Counter (n) #:mutable)
+(def c (Counter 0))
+(set-c.n! c 5)
+(c.n)                        ;=> 5
+
+;; --- structs are callable: a struct used in function position is a lookup ---
+;; (:kind {:kind :dog}) => :dog
+
+;; =====================================================================
+;; opaque types: encapsulation without a class system
+;; =====================================================================
+;; The type name is public; the constructor is not. So invariants hold, and
+;; there is no interface, no multiple inheritance, and no metaclass.
+;;
+;; Cost: ~50 lines of export metadata instead of a type system.
+
+(struct PositiveInt (n) #:opaque)
+
+(define (positive-int n)
+  (if (> n 0)
+      (ok (PositiveInt n))
+      (err 'not-positive)))
+
+;; The smart constructor is the ONLY way in, so the invariant cannot be broken:
+(match* (list (positive-int 5) (positive-int -1))
+  [((ok (PositiveInt n)) _) n]     ;=> 5
+  [(_ bad)               bad])     ;=> not-positive
+
+;; =====================================================================
+;; macros: available, but not needed for any of the above
+;; =====================================================================
+;; Everything so far used no macros at all. That is the point.
+
+;; Define a macro: defmacro runs at compile time and returns code.
+(defmacro unless-zero (form value body)
+  ;; form is ignored here; value and body are the unevaluated arguments
+  (list 'if (list '= value 0) '(do) body))
+
+;; macex1 expands one step -- the debugging window a macro language needs
+(print (macex1 (unless-zero 0 (print "never"))))
+;=> (if (= 0 0) (do) (print "never"))
+
+;; quasiquote builds code without nested list constructors
+(defmacro my-when (test . body)
+  `(if ,test (do ,@body) (do)))
+
+(print (macex (my-when #t (print "a") (print "b"))))
+;=> (if #t (do (print "a") (print "b")) (do))
+
+;; gensym for generated names -- the fix for capture, which is the sharp edge
+;; of an unhygienic macro system
+(defmacro define-constantly (name value)
+  (let [tmp (gensym 'tmp)]
+    `(let ([,tmp ,value])
+       (def ,name ,tmp))))
+
+;; `dotimes` is itself a macro; `swap` and `compose` likewise. The standard
+;; library is built from these, not from primitives.
+
+;; --- and a genuinely macro-shaped problem: an assert with no cost when on ---
+(defmacro debug-check (test)
+  `(when *debug* (print "check" ',test)))
+
+;; =====================================================================
+;; a program that uses none of the above macros
+;; =====================================================================
+
+;; Word frequency, top three. No macros. No nesting. No closures-per-element.
+(define (top-words text n)
+  (->> (string-split text " ")
+       (keep string-not-blank?)
+       (map string-downcase)
+       (frequencies)
+       (sort-by (fn (e) (- (get e 1))))
+       (take n)))
+
+(define report
+  (top-words "the quick brown fox jumps over the lazy dog the end the end" 3))
+
+(print (map car report))          ;=> ("end" "the" "fox")
+
+(print "pipelines ok")

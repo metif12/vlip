@@ -1,0 +1,128 @@
+;; examples/03_match.lip
+;; Pattern matching. This is the feature the language exists for.
+;;
+;; `match` destructures one value. `match*` destructures SEVERAL AT ONCE,
+;; atomically: a clause is tried only if ALL of its patterns match, and every
+;; subject is evaluated exactly once before any pattern is tested.
+
+;; --- the basics ---
+(match 5
+  [1 'one]
+  [5 'five]
+  [_ 'other])                          ;=> five
+
+;; `_` matches anything without binding it
+(match 5 [_ 'anything])                ;=> anything
+
+;; a bare symbol is a binding pattern, not a comparison
+(match 5 [x 'bound])                   ;=> bound   (x is 5)
+
+;; --- literal patterns ---
+(match "hi"
+  ["hi" 'greeting]
+  [_ 'other])                          ;=> greeting
+
+;; --- list patterns ---
+(match '(1 2 3)
+  [(list a b c) (+ a b c)])             ;=> 6
+
+(match '(1 2 3)
+  [()      'empty]
+  [(list 1) 'singleton]
+  [(list 1 rest) rest])                ;=> (2 3)   `rest` captures the tail
+
+(match '(1 2 3)
+  [(cons head tails) head])             ;=> 1       cons destructuring
+
+;; --- vector and table patterns ---
+(match [1 2]
+  [(vector a b) [b a]])                ;=> [2 1]
+
+(match {:kind :dog :name "rex"}
+  [{:kind :dog :name n} n])             ;=> "rex"
+
+;; --- struct patterns, including with field patterns ---
+(struct Point (x y))
+
+(match (Point 3 4)
+  [(struct Point x: px y: py) (+ px py)])   ;=> 7
+
+;; --- and / or build compound patterns ---
+(match 7
+  [(and odd? (> 7)) 'big-odd]
+  [_ 'other])                          ;=> big-odd
+
+(match 5
+  [(or 1 5 9) 'listed]
+  [_ 'other])                          ;=> listed
+
+;; --- comparison patterns, so you stop writing (and (> n 10) ...) ---
+(match 42
+  [(>= 100) 'huge]
+  [(>= 10)  'big']
+  [_ 'small])                          ;=> big
+
+;; --- guards ---
+(match 5
+  [(list x) #:when (even? x) 'even]
+  [(list x) #:when (odd? x)  'odd])    ;=> odd
+
+;; --- else as the final catch-all ---
+(match 99
+  [1 'one]
+  [else 'everything-else])             ;=> everything-else
+
+;; =====================================================================
+;; match* : THE reason this language exists
+;; =====================================================================
+;;
+;; Match two values at once. No nesting. This is Racket's best idea and almost
+;; nobody outside Racket has it. Steel cannot express it at all.
+
+(match* (list (lookup-sym 'alpha) (validate 'alpha))
+  [(val nil)   (ok val)]                ; found and valid
+  [(nil nil)   (ok 'default)]           ; absent -> default
+  [(nil _)     (err 'malformed)]
+  [(_ bad)     (err bad)])              ; present but invalid
+
+;; Four cases, four flat lines. Compare with nesting one match inside another,
+;; which is what every other Lisp forces here.
+
+;; --- match* works on any arity ---
+(match* (list 1 2 3)
+  [(1 2 x) x])                          ;=> 3
+
+;; --- and it needs no new syntax: it is a macro over match, with the subjects
+;; --- bound to temporaries first so each is evaluated exactly once.
+;;
+;; The single-evaluation guarantee is the whole reason for the temporaries, and
+;; it is what Racket's own documentation warns implementers about.
+
+;; --- `let assert`: a deliberately partial pattern ---
+;; Use when you are certain and want a clear crash rather than a noise clause.
+(let assert [(list a b) '(1 2)]
+  (+ a b))                              ;=> 3
+
+;; If the value does not match, this fails loudly with a message naming the
+;; pattern. Use it in code that should be unreachable, not in libraries.
+
+;; --- destructuring in bindings and parameters ---
+(let ([(list h t) '(1 2)]) (+ h t))     ;=> 3
+(let ([{:kind k} {:kind :dog}]) k)      ;=> :dog
+
+(define (dist (struct Point x: px y: py))
+  (sqrt (+ (* px px) (* py py))))
+
+(dist (Point 3 4))                      ;=> 5
+
+;; --- match on results, which is the everyday case ---
+(define (safe-div a b)
+  (if (= b 0)
+      (err 'divide-by-zero)
+      (ok (/ a b))))
+
+(match* (list (safe-div 10 2) (safe-div 1 0))
+  [(5 _)   'worked]
+  [(_ bad) bad])                        ;=> divide-by-zero
+
+(print "match ok")
