@@ -1,0 +1,21 @@
+# vlip build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.obj
+*.a
+
+# V intermediate output
+*.c
+*.h.tmp
+vlib/
+modules/
+*.vgen
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
