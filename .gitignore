@@ -8,11 +8,11 @@
 *.a
 
 # V intermediate output
-*.c
-*.h.tmp
-vlib/
-modules/
 *.vgen
+*.vtmp
+
+# NOT ignored: vlib/vlip/ holds the vlip implementation itself.
+# Only V's own generated vlib/ (dependencies fetched by `v`) is excluded.
 
 # Editor
 .vscode/
