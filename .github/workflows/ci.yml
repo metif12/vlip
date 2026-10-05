@@ -6,41 +6,54 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  # The compiler this project is developed against, pinned. Not the 0.5.2
+  # release: vlang/v master at 0137eb5 also reports itself as "V 0.5.2", but it
+  # is a different build, and it resolves `import vlib.vlip.reader` against the
+  # project's own vlib where the release build resolves it against V's standard
+  # library and reports the module as an unknown function.
+  #
+  # A CI runner that installs a different compiler than the developer is worse
+  # than no CI: it reports a failure that does not reproduce locally, or -- far
+  # worse -- passes while checking something other than what is shipped.
+  V_COMMIT: 0137eb5d8ebc5d183259309ed08ea06ba9bc27d6
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install V
-        run: |
-          # Pinned, not `latest`. This code targets V 0.5.2: it needs `-cc gcc`,
-          # and its module layout relies on that version's vlib lookup order. A
-          # newer compiler resolves `import vlib.vlip.reader` against its own
-          # standard library and reports "unknown function" for a module that
-          # compiles locally, which is exactly the kind of drift a green CI run
-          # hides. Change this deliberately, not by accident.
-          curl -fsSL https://github.com/vlang/v/releases/download/0.5.2/v_linux.zip -o v.zip
-          unzip -q v.zip
-          # The archive unpacks to a full V tree -- v/v, v/vlib/, v/makev.bat and
-          # so on -- not to a bare binary. Two wrong moves were tried first:
-          # `install -m755 v` fails with "omitting directory 'v'", and copying out
-          # just the executable installs fine but then every project import
-          # resolves against V's standard library instead of the project's, so
-          # `import vlib.vlip.reader` is reported as an unknown function.
-          #
-          # Install the whole tree at /usr/local/v and symlink the binary, which
-          # is the layout V expects: vlib sits beside the executable.
-          test -d v/vlib || { echo "::error::archive has no v/vlib"; exit 1; }
-          sudo rm -rf /usr/local/v
-          sudo mv v /usr/local/v
-          sudo chmod +x /usr/local/v/v
-          sudo ln -sf /usr/local/v/v /usr/local/bin/v
-          v version
+      - name: Cache the V compiler
+        id: vcache
+        uses: actions/cache@v4
+        with:
+          path: v
+          key: v-${{ env.V_COMMIT }}
 
-      # `-cc gcc` everywhere: the default C backend in the pinned V release
-      # fails on this checkout, and the local tests are run the same way, so CI
-      # cannot pass while a developer is seeing something different.
+      - name: Build V
+        if: steps.vcache.outputs.cache-hit != 'true'
+        run: |
+          # No release archive: the prebuilt ones are a different compiler, and
+          # installing only the executable out of one leaves V unable to find
+          # the vlib beside it. Build the pinned commit instead.
+          git init -q v
+          cd v
+          git remote add origin https://github.com/vlang/v.git
+          git fetch -q --depth 1 origin "$V_COMMIT"
+          git checkout -q FETCH_HEAD
+          make
+
+      - name: Put V on PATH
+        run: echo "$GITHUB_WORKSPACE/v" >> "$GITHUB_PATH"
+
+      - name: Confirm the toolchain
+        run: |
+          v version
+          gcc --version | head -n 1
+
+      # `-cc gcc` everywhere, matching the local build commands in the README.
+      # The default C backend fails on this checkout.
       - name: Build everything
         run: |
           v -cc gcc -o vlip vlip.v
