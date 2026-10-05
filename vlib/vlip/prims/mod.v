@@ -268,7 +268,7 @@ pub fn value_eq(a vlip.Value, b vlip.Value) bool {
 	match a.tag {
 		.integer, .rune, .boolean { return a.i == b.i }
 		.float { return a.f == b.f }
-		.nil { return true }
+		.nil, .emptylist { return true }
 		.string, .symbol, .keyword { return a.as_string() == b.as_string() }
 		.pair {
 			mut x := a
@@ -424,7 +424,7 @@ fn prim_length(args []vlip.Value) !vlip.Value {
 		}
 		.vector { return vlip.integer(args[0].as_vector().data.len) }
 		.string { return vlip.integer(args[0].as_string().len) }
-		.nil { return vlip.integer(0) }
+		.nil, .emptylist { return vlip.integer(0) }
 		else { return error('length expects a collection, got ${printer.write(args[0])}') }
 	}
 }
@@ -501,11 +501,14 @@ fn tag_is(v vlip.Value, t vlip.Tag) vlip.Value {
 }
 
 fn prim_nullp(args []vlip.Value) !vlip.Value {
-	return tag_is(args[0], .nil)
+	// True for BOTH the empty list and nil. The examples assert
+	// `(null? '())` is true, and also that nil and () print differently, so the
+	// predicate has to accept both values.
+	return vlip.boolean(args[0].is_empty_seq())
 }
 
 fn prim_nilp(args []vlip.Value) !vlip.Value {
-	return tag_is(args[0], .nil)
+	return vlip.boolean(args[0].is_empty_seq())
 }
 
 fn prim_pairp(args []vlip.Value) !vlip.Value {
@@ -550,7 +553,7 @@ fn prim_numberp(args []vlip.Value) !vlip.Value {
 
 // list? must reject cyclic lists, so it uses tortoise and hare.
 fn prim_listp(args []vlip.Value) !vlip.Value {
-	if args[0].tag == .nil {
+	if args[0].is_empty_seq() {
 		return vlip.boolean(true)
 	}
 	if args[0].tag != .pair {

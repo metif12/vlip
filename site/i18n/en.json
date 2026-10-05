@@ -27,7 +27,7 @@
 
   "home.statusTitle": "Where it stands",
   "home.status1": "Working: the reader, closures, arithmetic, branching, loop, dotimes, letrec, cond, case, and proper tail calls including mutual recursion.",
-  "home.status2": "Not yet: let*, rest parameters, callable keywords, modules, and macros. Each one is named in the repository rather than quietly missing.",
+  "home.status2": "Working: let, let*, letrec, rest parameters, and keywords that are callable, so (:a {:a 1}) is a lookup. Not yet: match, structs, modules and macros. Each one is named in the repository rather than quietly missing.",
 
   "features.title": "Features",
   "features.sub": "What the machine does today, and what it is built to do next.",
@@ -169,8 +169,8 @@
   "docs.p.io.d": "Write to the machine's output buffer, not straight to a terminal, so a host can capture it.",
 
   "docs.wipTitle": "Not implemented yet",
-  "docs.wip1": "let* and rest parameters are written in the examples and do not yet evaluate correctly. Callable keywords do not work either.",
-  "docs.wip2": "The cause of the let* failure is a real design question rather than a typo: [ ] is a vector literal in a value position and a binding group in a form position, and the reader does not yet record which reading applies. It is written up in the roadmap.",
+  "docs.wip1": "match, match*, structs, modules and macros are written in the examples and do not yet evaluate. Each one is named in the repository rather than quietly missing.",
+  "docs.wip2": "The bracket question is settled: [ ] is read by position, not by a reader flag. In the second slot of let, let* and letrec it is a binding group, and everywhere else it is a vector literal. Both [a 1] and (a 1) are accepted.",
 
   "guides.title": "Guides",
   "guides.sub": "From a clone to something that runs, in five steps.",

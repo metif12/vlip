@@ -25,7 +25,7 @@ import strconv
 
 @[flag]
 pub enum Tag {
-	nil // the empty value
+	nil // the empty value: absence of a result
 	boolean
 	integer
 	float
@@ -34,6 +34,7 @@ pub enum Tag {
 	symbol    // interned string
 	keyword   // interned string, self-evaluating, callable
 	pair
+	emptylist // the empty list: a sequence of length zero
 	vector
 	array     // mutable vector
 	table     // immutable map
@@ -41,6 +42,7 @@ pub enum Tag {
 	closure
 	primitive
 	continuation
+	struct_   // a struct instance; the constructor name is in the payload
 }
 
 // NodeId indexes the reader's flat arena. It lives here rather than in the
@@ -155,6 +157,23 @@ pub fn nil_value() Value {
 	}
 }
 
+// empty_list is the empty list, which is NOT the nil value.
+//
+// The examples assert both `(get {:a 1} :missing) ;=> nil` and `(list) ;=> ()`,
+// so one value cannot print both ways. They are therefore two values, and
+// `null?` / `nil?` are true of both -- which is also what Clojure does, and it
+// is the only reading under which `nil` means "no result" while `(cdr '(1))`
+// still reads back as `()`.
+//
+// The alternative, printing nil as `()`, makes every absent lookup and every
+// missing argument indistinguishable from an empty sequence at a glance.
+pub fn empty_list() Value {
+	return Value{
+		tag:     .emptylist
+		payload: no_payload
+	}
+}
+
 pub fn boolean(b bool) Value {
 	return Value{
 		tag:     .boolean
@@ -228,9 +247,14 @@ pub fn cons(car Value, cdr Value) Value {
 	}
 }
 
-// list_from builds a cons chain right to left.
+// list_from builds a cons chain right to left. An empty input gives the empty
+// list, not nil: `list_from` is how a cons chain's base case is built, so the
+// base case has to be a sequence.
 pub fn list_from(items []Value) Value {
-	mut out := nil_value()
+	if items.len == 0 {
+		return empty_list()
+	}
+	mut out := empty_list()
 	mut i := items.len - 1
 	for i >= 0 {
 		out = cons(items[i], out)
@@ -326,6 +350,13 @@ pub fn (v Value) is_nil() bool {
 	return v.tag == .nil
 }
 
+// is_empty_seq is what `null?` asks: true for the empty list AND for nil, because
+// both mean "no elements here", and the examples assert `(null? '())` is true.
+@[inline]
+pub fn (v Value) is_empty_seq() bool {
+	return v.tag == .nil || v.tag == .emptylist
+}
+
 // ---- environments ----------------------------------------------------------
 
 // Env is one lexical scope. Environments live in an arena and are referenced by
@@ -407,6 +438,16 @@ pub fn (mut ea EnvArena) set(id EnvId, name string, val Value) bool {
 
 // ---- callables -------------------------------------------------------------
 
+// Closure carries `rest` as a flag rather than a magic parameter name.
+//
+// The obvious version binds the rest to a parameter literally called `rest` and
+// checks `params.last == 'rest'`. That makes `(define (f rest) ...)` -- a
+// perfectly ordinary function of one argument -- silently variadic, and it makes
+// the flag invisible in the parameter list, so a caller reading the signature
+// cannot tell arity from arity-at-least.
+//
+// A flag costs one bool and keeps both cases unambiguous: `(define (f a . r) r)`
+// is 1-or-more, `(define (f rest) rest)` is exactly 1.
 pub struct Closure {
 pub:
 	params []string
@@ -414,6 +455,7 @@ pub:
 	env    EnvId
 	name   string
 	arity  int
+	rest   bool
 }
 
 pub fn (c &Closure) payload_tag() Tag {
@@ -429,6 +471,26 @@ pub fn new_closure(params []string, body NodeId, env EnvId, name string) Value {
 			env:    env
 			name:   name
 			arity:  params.len
+		}
+	}
+}
+
+// new_rest_closure is the variadic constructor. `params` EXCLUDES the rest
+// name; the rest name is kept separately so binding it cannot collide with an
+// ordinary parameter.
+pub fn new_rest_closure(params []string, rest_name string, body NodeId, env EnvId, name string) Value {
+	mut all := []string{}
+	all << params
+	all << rest_name
+	return Value{
+		tag: .closure
+		payload: &Closure{
+			params: all
+			body:   body
+			env:    env
+			name:   name
+			arity:  params.len
+			rest:   true
 		}
 	}
 }
