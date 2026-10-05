@@ -118,6 +118,13 @@ panic inside an embedded interpreter unwinds through the host and kills it, so
 that has to be true before anything can call vlip from V, and certainly before
 Lua.
 
+Section 7 of that document is the upkeep checklist: syncing against a new V,
+re-running the representation probes, and keeping the known-broken list honest.
+The compiler sync is the one that matters most, because this project does not
+target the `0.5.2` release — it targets vlang/v master at the commit pinned in
+`.github/workflows/ci.yml`, which resolves `vlib.vlip.*` against the project's
+own modules where the release build resolves it against V's standard library.
+
 ## Design notes worth knowing
 
 - **The value representation was decided by the host language, not by taste.** The

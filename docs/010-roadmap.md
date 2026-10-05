@@ -188,3 +188,182 @@ site whose examples do not run is the most common way a language project dies.
 8. veb calls vlip (option 2), if the continuation work is worth it.
 9. Make the repository public at step 7, not before: the site should exist
    before the URL does.
+
+## 7. Periodic work
+
+Nothing in this section is a deliverable. All of it is upkeep, and all of it is
+the kind of work that gets skipped until the day it turns into an incident. The
+cadences are deliberately conservative: this project has one contributor and no
+users, so the risk is wasted effort, not missed SLAs.
+
+### 7.1 Syncing against a new V — monthly, and on every V release
+
+This is the highest-value recurring task and the one most likely to break
+silently.
+
+**Why it is delicate.** The project does not target the `0.5.2` *release*. It
+targets vlang/v **master at a pinned commit** (`V_COMMIT` in
+`.github/workflows/ci.yml`), which also self-reports as `V 0.5.2` but resolves
+modules differently: the release build looks `import vlib.vlip.reader` up in V's
+own standard library and reports every module here as an unknown function,
+while the pinned build resolves it in the project's `vlib/`. Nothing in the
+source changed; only the compiler did.
+
+**Procedure.**
+
+1. `git -C <v-install> fetch && git log --oneline HEAD..origin/master` and read
+   what moved. V's changelog is not a reliable summary of what affects
+   codegen.
+2. Bump `V_COMMIT` in `.github/workflows/ci.yml`.
+3. Run the suites **locally** against the new compiler before trusting CI:
+
+   ```sh
+   v -cc gcc -o tools\tail.exe tests\tail_calls.v       && .\tools\tail.exe
+   v -cc gcc -o tools\nt.exe   tests\non_tail.v         && .\tools\nt.exe
+   v -cc gcc -o tools\lf.exe   tests\loop_forms.v      && .\tools\lf.exe
+   v -cc gcc -o reader_probe.exe reader_probe.v        && .\reader_probe.exe examples\*.lip
+   v -cc gcc -o vlip.exe vlip.v
+   ```
+
+   Local first, deliberately: a compiler change that breaks the build should be
+   diagnosed where it reproduces, not through a CI log.
+4. Re-run the probes in `src/`, which are the regression net for the
+   representation decisions (section 7.2).
+5. If `-cc gcc` is no longer required, say so in the README and in both
+   workflows at the same time. Those three places drifting apart is how a
+   "works on my machine" bug gets shipped.
+6. Record anything surprising in `~/.config/opencode/lessons.md`. The module
+   resolution difference above cost four CI runs to characterise and is worth
+   one line for the next session.
+
+**Also check when V moves:** the `-cc gcc` requirement, `NodeId` codegen
+(section 7.3), the `voidptr`-is-not-a-GC-root finding, and whether V's V3
+compiler has become the default on Linux, since that changes which backend CI
+is exercising relative to the Windows development machine.
+
+### 7.1a Which V actually ran — check this before debugging anything else
+
+Two things about the V installation are invisible in a passing build and very
+visible in a failing one. Both have already cost CI runs here.
+
+**The compiler is not the version.** `vlang/v` master and the `0.5.2` release
+both print `V 0.5.2`. The build hash after it is what distinguishes them
+(`0137eb5` here). Pin `V_COMMIT` and read `v version` in the log.
+
+**The compiler may not be the one you think, per platform.** On macOS, Linux and
+BSD, `v` tries the experimental **V3** compiler by default and *silently falls
+back* to the established compiler when V3 declines the program. The two resolve
+module paths differently: the established compiler looks up
+`import vlib.vlip.reader` in V's own standard library and reports every module
+in this repository as an unknown function — for files that exist, and that
+compile and pass locally from the same commit.
+
+That is the whole story behind four consecutive red CI runs that all reported
+the same "unknown function" errors on a codebase that was fine.
+
+- `V_MACOS_V3_NO_FALLBACK=1` stops the fallback, so a Linux runner behaves like
+  the Windows development machine. Set in `.github/workflows/ci.yml`.
+- `-old-compiler` forces the established compiler. Do **not** reach for it to
+  "fix" this: it produces the module errors directly, and it also rejects
+  `drive()` in `vlib/vlip/machine/mod.v` for a missing return after an infinite
+  `for`, which the compiler V3 accepts.
+- `v help build-c` documents `-old-compiler` and the related flags.
+
+Rule: when a build fails on files that compile locally from the same commit,
+suspect the toolchain before the code, and print `v version` before reading
+anything else.
+
+### 7.2 Re-running the representation probes — with every compiler sync
+
+`src/gc_probe.v`, `src/bench_value.v`, `src/probe_phases.v` and
+`src/probe_fnptr.v` exist to catch the host-language facts the whole `Value`
+design rests on. They are cheap and they are the only warning before a
+representation change becomes a memory-corruption bug.
+
+Treat a change in these as a design event, not a benchmark update:
+
+| Probe | What a change means |
+|---|---|
+| `gc_probe.v` | the payload is no longer a GC root, or the collector changed. `Value` must be redesigned before anything else is built on it. |
+| `bench_value.v` | the inline-vs-boxed trade-off has moved; re-open section M0 of `docs/000-vlip-design.md`. |
+| `probe_phases.v` | a pipeline phase is no longer paying for itself. |
+| `probe_fnptr.v` | primitive dispatch got slower; affects the `call_primitive` fast path. |
+
+Do **not** "fix" a probe to make it pass. These programs assert host-language
+facts; when one fails, the fact changed and the code above it is what has to
+move.
+
+### 7.3 Watching for V codegen bugs — continuous
+
+V 0.5.2 miscompiles two things this codebase leans on, both found by hitting
+them rather than by reading a changelog:
+
+- `for x in slice` where the element type is a type alias from another module
+  emits an unresolved type name into the generated C. `vlib/vlip/machine/mod.v`
+  works around it with an index loop in `transform_letrec`.
+- Interpolating a `[]vlip.NodeId` into a string emits the same unresolved name.
+  The AST-dumping probes were rewritten to avoid it.
+
+When either is fixed upstream, the workaround should be removed in the same
+change that removes the comment explaining it. A workaround with no comment
+becomes folklore; a comment with no workaround becomes a lie.
+
+### 7.4 Keeping the two `vlib`s apart — continuous
+
+There are two different things called `vlib` in this repository, and conflating
+them has already cost time:
+
+- **V's standard library**, reached as `@vlib`, which lives in the V
+  installation.
+- **This project's modules**, in `vlib/vlip/` at the repository root, imported
+  as `vlib.vlip.*`.
+
+If the project is renamed (section 1), rename the directory in the same commit
+that renames the module references, and update `.gitignore`, which already has a
+comment explaining that `vlib/vlip/` is deliberately *not* ignored. Keep that
+comment accurate.
+
+### 7.5 Keeping the known-broken list honest — every milestone
+
+Three things are listed as failing in the README, the test suite and this
+document: `let*`, rest parameters, callable keywords. A list of known failures
+is only useful while it is true, and the failure mode is silent: nobody reads a
+stale "known broken" note and concludes the bug is fixed.
+
+So, per milestone:
+
+1. Fix it and delete the note in the same commit. A note describing a fixed bug
+   is worse than no note.
+2. Re-run the suites and confirm no `FAIL` line survives.
+3. Update the site. It carries the same list, in `site/index.html`, and it is the
+   copy a visitor will read.
+4. `docs/000-vlip-design.md` claims some behaviour the machine does not yet
+   have. Reconcile it with reality rather than leaving the design document as
+   an aspiration that quietly diverges.
+
+### 7.6 Housekeeping — quarterly
+
+- **Actions versions.** The Pages run already warns that `actions/checkout@v4`,
+  `actions/configure-pages@v5` and `actions/upload-artifact@v4` target Node 20
+  and are being forced onto Node 24. Bump them when the majors move.
+- **Prune scratch files.** `tools/*.exe`, `out*.txt` and ad-hoc `tests/dbg_*.v`
+  probes accumulate during debugging. The ones that earned their place are
+  `tests/non_tail.v` and `tests/loop_forms.v`; anything still named `dbg_` is
+  disposable.
+- **Tag milestones.** M0 through M10 in `README.md` are the release vocabulary.
+  Tag the commit that satisfies each gate so the tags mean something.
+- **Dependencies.** `v.mod` declares none, and that is worth keeping: every one
+  added is a licence to track and a version to re-test on each V sync. If that
+  changes, record why.
+- **The site.** `site/index.html` is hand-written until the final phase. Its
+  claims — the tail-call table, the "verified" list — are checked by CI against
+  the real suite, so a number in it cannot rot unnoticed. Keep that property when
+  the site becomes generated.
+
+### 7.7 Turning this section into tracked work
+
+This document is a checklist, not a scheduler. When more than one person
+contributes, each numbered item above should become an issue, recurring on the
+cadence stated, with the procedure pasted into the issue body so it survives
+without this file.
+

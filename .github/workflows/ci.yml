@@ -9,14 +9,23 @@ on:
 env:
   # The compiler this project is developed against, pinned. Not the 0.5.2
   # release: vlang/v master at 0137eb5 also reports itself as "V 0.5.2", but it
-  # is a different build, and it resolves `import vlib.vlip.reader` against the
-  # project's own vlib where the release build resolves it against V's standard
-  # library and reports the module as an unknown function.
+  # is a different build.
   #
   # A CI runner that installs a different compiler than the developer is worse
   # than no CI: it reports a failure that does not reproduce locally, or -- far
   # worse -- passes while checking something other than what is shipped.
   V_COMMIT: 0137eb5d8ebc5d183259309ed08ea06ba9bc27d6
+
+  # On macOS, Linux and BSD `v` tries its experimental V3 compiler first and
+  # silently falls back to the established one when V3 declines the program. The
+  # two resolve `import vlib.vlip.reader` differently -- the established one
+  # looks in V's standard library and reports every module here as unknown --
+  # so the fallback turned a working build into a wall of "unknown function"
+  # errors naming files that exist and compile locally.
+  #
+  # Refusing the fallback makes Linux behave like the Windows development
+  # machine instead of quietly testing a different compiler.
+  V_MACOS_V3_NO_FALLBACK: '1'
 
 jobs:
   test:
