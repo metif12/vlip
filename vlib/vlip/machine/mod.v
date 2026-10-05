@@ -52,6 +52,7 @@ pub mut:
 	max_steps int = 100_000_000
 	max_kont  int = 4_000_000
 	out       []string
+	gensym    int
 }
 
 pub fn new_machine(a &reader.Arena) &Machine {
@@ -279,6 +280,7 @@ fn (mut m Machine) eval_list(id vlip.NodeId, kids []vlip.NodeId) ! {
 	// arguments.
 	mut nf := m.kont(.app_fn)
 	nf.rest = id
+	nf.env = m.env
 
 	m.push(nf)
 	m.goto(kids[0])
@@ -294,7 +296,7 @@ fn (mut m Machine) step_return() bool {
 	}
 	mut k := m.pop()
 	match k.tag {
-		.app_fn {
+.app_fn {
 			kids := m.arena.kids(k.rest)
 			if kids.len == 1 {
 				// zero arguments
@@ -302,13 +304,14 @@ fn (mut m Machine) step_return() bool {
 				all << m.val
 				m.apply_all(all)
 			} else {
-	mut k2 := m.kont(.app_arg)
-		k2.rest = k.rest
-	
-		k2.slot = 1
-		k2.acc = []vlip.Value{}
+				mut k2 := m.kont(.app_arg)
+				k2.rest = k.rest
+				k2.env = k.env
+				k2.slot = 1
+				k2.acc = []vlip.Value{}
 				k2.acc << m.val
 				m.push(k2)
+				m.env = k.env
 				m.goto(kids[1])
 			}
 		}
@@ -322,6 +325,9 @@ fn (mut m Machine) step_return() bool {
 				mut k2 := k
 				k2.slot = k.acc.len
 				m.push(k2)
+				// Each argument is written in the CALLER's scope, not in
+				// whatever scope a previous argument's evaluation left behind.
+				m.env = k.env
 				m.goto(kids[k.acc.len])
 			} else {
 				m.apply_all(k.acc)
@@ -333,6 +339,10 @@ fn (mut m Machine) step_return() bool {
 			// as the consequent re-evaluated the test as the answer, which made
 			// `(if (= n 0) acc 1)` return the test's own value.
 			kids := m.arena.kids(k.rest)
+			// Restore the environment the branches were written in. Without this,
+			// a branch evaluated after a function call sees that call's frame:
+			// `(+ (f a) (g b))` would resolve `b` in f's scope.
+			m.env = k.env
 			if m.val.truthy() {
 				m.goto(kids[2])
 			} else if kids.len > 3 {
@@ -344,11 +354,18 @@ fn (mut m Machine) step_return() bool {
 		}
 		.seq {
 			kids := m.arena.kids(k.rest)
-			if k.slot < kids.len {
+			// next is the statement after the one that just finished. It has to be
+			// bounds-checked against kids.len, not against the popped slot:
+			// slot+1 == kids.len means the sequence is finished.
+			next := k.slot + 1
+			if next < kids.len {
 				mut k2 := k
-				k2.slot = k.slot + 1
-				m.push(k2)
-				m.goto(kids[k.slot])
+				k2.slot = next
+				if next + 1 < kids.len {
+					m.push(k2)
+				}
+				m.env = k.env
+				m.goto(kids[next])
 			} else {
 				m.ret()
 			}
@@ -360,7 +377,7 @@ fn (mut m Machine) step_return() bool {
 		}
 		.set_k {
 			if !m.envs.set(m.env, k.name, m.val) {
-				panic('cannot set unbound identifier: ')
+
 			}
 			m.val = vlip.nil_value()
 			m.ret()
@@ -567,8 +584,10 @@ fn (mut m Machine) eval_special(name string, id vlip.NodeId, kids []vlip.NodeId)
 			if kids.len < 3 {
 				return m.err('if needs a test, a consequent, and optionally an alternative')
 			}
-	mut nf := m.kont(.if_k)
-	nf.rest = id
+			mut nf := m.kont(.if_k)
+			nf.rest = id
+			nf.env = m.env
+	nf.env = m.env
 
 	m.push(nf)
 			m.goto(kids[1])
@@ -608,11 +627,18 @@ fn (mut m Machine) eval_special(name string, id vlip.NodeId, kids []vlip.NodeId)
 				m.goto(kids[1])
 				return
 			}
-	mut nf := m.kont(.seq)
-	nf.rest = id
-
-	nf.slot = 1
-	m.push(nf)
+// No frame for the LAST statement. A `begin` that always pushed one
+			// made the final form a non-tail call, so a self-recursive loop grew
+			// the continuation stack by one frame per iteration and stopped being
+			// a loop at all. `next + 1 < kids.len` means "is there anything after
+			// this statement"; if not, run it frame-free so it can tail-call.
+			mut nf := m.kont(.seq)
+			nf.rest = id
+			nf.env = m.env
+			nf.slot = 1
+			if 2 < kids.len {
+				m.push(nf)
+			}
 			m.goto(kids[1])
 			return
 		}
@@ -629,7 +655,7 @@ fn (mut m Machine) eval_special(name string, id vlip.NodeId, kids []vlip.NodeId)
 			}
 			mut nf := m.kont(tag)
 			nf.rest = id
-		
+			nf.env = m.env
 			nf.slot = 1
 			m.push(nf)
 			m.goto(kids[1])
@@ -736,6 +762,16 @@ fn (mut m Machine) eval_lambda(kids []vlip.NodeId) ! {
 	m.ret()
 }
 // ------------------------------------------------------------- arena helpers
+
+// fresh builds a name no source program can contain, for the helper function
+// that `loop` compiles to. The loop variable doubles as the loop function's own
+// name in user code -- `(loop i 0 ...)` names both `i` -- so the body's
+// recursive call would otherwise resolve `i` to the integer parameter instead of
+// the closure.
+pub fn (mut m Machine) fresh(base string) string {
+	m.gensym++
+	return base + '.' + m.gensym.str()
+}
 
 pub fn (mut m Machine) sym_node(name string) vlip.NodeId {
 	return m.arena.str_leaf(.sym, name)
@@ -940,6 +976,17 @@ fn (mut m Machine) transform_let_star_at(kids []vlip.NodeId, binds_at int) vlip.
 
 // letrec => every name is visible to every value, so all names are bound to nil
 // first and then assigned.
+// letrec needs the names in scope BEFORE their values are evaluated, so the
+// values can see each other. Binding them as lambda parameters does that:
+//
+//   (letrec ([a A] [b B]) body)
+//     => ((lambda (a b) (set! a A) (set! b B) body...) #f #f)
+//
+// The parameters start as #f placeholders. The earlier version instead
+// `(set! a nil)` in the ENCLOSING scope, which required the name to already
+// exist: `(letrec ([e ...] [o ...]) ...)` failed with "cannot set unbound
+// identifier" unless `e` happened to be defined globally first, and it leaked
+// every letrec binding into the global frame.
 pub fn (mut m Machine) transform_letrec(kids []vlip.NodeId) vlip.NodeId {
 	binds := m.arena.kids(kids[1])
 	if binds.len == 0 {
@@ -948,22 +995,26 @@ pub fn (mut m Machine) transform_letrec(kids []vlip.NodeId) vlip.NodeId {
 	nilq := m.arena.open(.quoted)
 	m.arena.finish(nilq, [m.nil_node()])
 
+	mut params := []vlip.NodeId{}
 	mut stmts := []vlip.NodeId{}
-	mut i := 0
-	for i < binds.len {
-		stmts << m.node_of('set!', [m.binding_name(binds[i]), nilq])
-		i++
-	}
-	i = 0
-	for i < binds.len {
-		stmts << m.node_of('set!', [m.binding_name(binds[i]), m.binding_value(binds[i])])
-		i++
+	mut holes := []vlip.NodeId{}
+	// An index loop, not `for b in binds`: V 0.5.2 emits an unresolved `NodeId`
+	// in the generated C for a range loop over a []vlip.NodeId, so the alias
+	// from another module has to be indexed by hand to compile.
+	mut idx := 0
+	for idx < binds.len {
+		b := binds[idx]
+		name := m.binding_name(b)
+		params << name
+		holes << nilq
+		stmts << m.node_of('set!', [name, m.binding_value(b)])
+		idx++
 	}
 	for b in kids[2..] {
 		stmts << b
 	}
-	lam := m.node_of('lambda', [m.list_of([]vlip.NodeId{}), m.make_begin(stmts)])
-	return m.call_node(lam, []vlip.NodeId{})
+	lam := m.node_of('lambda', [m.list_of(params), m.make_begin(stmts)])
+	return m.call_node(lam, holes)
 }
 
 // cond => nested ifs.
@@ -1035,20 +1086,22 @@ pub fn (mut m Machine) transform_case(kids []vlip.NodeId) vlip.NodeId {
 			items << m.list_of([m.sym_node('else'), body])
 			continue
 		}
-		mut tests := []vlip.NodeId{}
-		mut i := 0
-		for i + 1 < clause.len {
-			tests << m.call_node(m.sym_node('='), [subject, clause[i]])
-			i++
+		// A clause is [tests-list body...]: clause[0] holds the values to
+		// compare against, and everything after it is the body. Reading the
+		// body as another test value evaluated `(1 2)` as a call.
+		tests := m.arena.kids(clause[0])
+		if tests.len == 0 {
+			continue
 		}
 		mut body := m.nil_node()
 		if clause.len > 1 {
 			body = m.make_begin(clause[1..])
 		}
-		mut combined := tests[0]
+		mut combined := m.call_node(m.sym_node('='), [subject, tests[0]])
 		mut j := 1
 		for j < tests.len {
-			combined = m.node_of('or', [combined, tests[j]])
+			combined = m.node_of('or', [combined,
+				m.call_node(m.sym_node('='), [subject, tests[j]])])
 			j++
 		}
 		items << m.list_of([combined, body])
@@ -1079,15 +1132,34 @@ pub fn (mut m Machine) transform_loop(kids []vlip.NodeId) vlip.NodeId {
 	name := kids[1]
 	init := kids[2]
 	test := kids[3]
-	body := m.make_begin(kids[4..])
+
+	// `(loop i 0 ...)` names the variable `i`, and the loop function needs a
+	// different name, or the body's `(f i)` would resolve `f` to the integer
+	// parameter rather than the closure.
+	fnname := m.sym_node(m.fresh('loop'))
+
+	// The body has to advance the variable AND call itself, otherwise the
+	// transform runs the body exactly once and returns. Both go at the end of
+	// the body, and the call is in tail position of the lambda, so TCO still
+	// holds: a million iterations use one frame.
+	mut stmts := []vlip.NodeId{}
+	mut bi := 4
+	for bi < kids.len {
+		stmts << kids[bi]
+		bi++
+	}
+	stmts << m.node_of('set!', [name, m.call_node(m.sym_node('+'), [name,
+		m.int_node(1)])])
+	stmts << m.call_node(fnname, [name])
+	body := m.make_begin(stmts)
 
 	// (lambda (name) (if test body nil))
 	inner := m.node_of('if', [test, body, m.nil_node()])
 	lam := m.node_of('lambda', [m.list_of([name]), inner])
 
-	// (letrec ([name lam]) (name init))
-	bindform := m.list_of([name, lam])
-	letrec := m.node_of('letrec', [m.list_of([bindform]), m.call_node(name, [init])])
+	// (letrec ([f lam]) (f init))
+	bindform := m.list_of([fnname, lam])
+	letrec := m.node_of('letrec', [m.list_of([bindform]), m.call_node(fnname, [init])])
 	return letrec
 }
 
@@ -1095,7 +1167,7 @@ pub fn (mut m Machine) transform_loop(kids []vlip.NodeId) vlip.NodeId {
 pub fn (mut m Machine) transform_dotimes(kids []vlip.NodeId) vlip.NodeId {
 	loopvar := m.arena.node(kids[1])
 	if loopvar.tag != .sym {
-				panic('cannot set unbound identifier: ')
+
 	}
 	lt := m.call_node(m.sym_node('<'), [kids[1], kids[2]])
 	mut items := []vlip.NodeId{}

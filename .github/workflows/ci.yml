@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install V
+        run: |
+          curl -fsSL https://github.com/vlang/v/releases/latest/download/v_linux.zip -o v.zip
+          unzip -q v.zip
+          sudo install -m755 v /usr/local/bin/v
+          v version
+
+      # `-cc gcc` everywhere: the default C backend in the pinned V release
+      # fails on this checkout, and the local tests are run the same way, so CI
+      # cannot pass while a developer is seeing something different.
+      - name: Build everything
+        run: |
+          v -cc gcc -o vlip vlip.v
+          v -cc gcc -o reader_probe reader_probe.v
+          v -cc gcc -o tail tests/tail_calls.v
+          v -cc gcc -o non_tail tests/non_tail.v
+          v -cc gcc -o loop_forms tests/loop_forms.v
+
+      # These runners print results and do not set an exit code yet, so the
+      # output is checked rather than the status. That is listed as a known gap
+      # in docs/010-roadmap.md: errors becoming values is what will remove it.
+      - name: Run the suites
+        run: |
+          set -o pipefail
+          ./tail        | tee out.txt
+          ./non_tail    | tee -a out.txt
+          ./loop_forms  | tee -a out.txt
+          if grep -qE '^FAIL|panic' out.txt; then
+            echo "::error::a check failed or the machine panicked"
+            exit 1
+          fi
+
+      - name: Every example parses
+        run: ./reader_probe examples/*.lip

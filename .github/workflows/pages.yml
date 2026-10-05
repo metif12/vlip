@@ -1,0 +1,59 @@
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race: a newer commit cancels an in-flight publish.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The site is currently hand-written HTML. The plan is to generate it
+      # from vlip itself (docs/010-roadmap.md, final phase), at which point this
+      # job grows a `v -cc gcc -o sitegen site/build.lip && ./sitegen` step and
+      # the copy below becomes the fallback rather than the product.
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp -r site/. _site/
+          cp README.md _site/README.md
+          test -f _site/index.html
+
+      - name: Check for broken local links
+        run: |
+          if grep -oE 'href="/[^"]*"' _site/index.html; then
+            echo "::error::site uses absolute paths; Pages serves from a subpath"
+            exit 1
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

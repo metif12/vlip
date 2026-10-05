@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vlip — a Lisp for V</title>
+<meta name="description" content="vlip is a small Lisp dialect implemented in V, built around an explicit CEK machine with real tail calls and an embeddable core.">
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a21;
+    --line: #262c37;
+    --text: #d8dee9;
+    --dim: #8b94a7;
+    --accent: #7ee0a8;
+    --accent2: #f0b072;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #fbfbfd; --panel: #ffffff; --line: #e3e6ec;
+      --text: #1c2128; --dim: #5b6472; --accent: #1a7f4b; --accent2: #a35c12;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 46rem; margin: 0 auto; padding: 4rem 1.5rem 6rem; }
+  h1 { font-size: 2.6rem; letter-spacing: -0.03em; margin: 0 0 0.25rem; }
+  h1 .k { color: var(--accent); }
+  .tag { color: var(--dim); font-size: 1.1rem; margin: 0 0 3rem; }
+  h2 {
+    font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--dim); font-weight: 600; margin: 3rem 0 1rem;
+  }
+  p { margin: 0 0 1rem; }
+  a { color: var(--accent); }
+  pre {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 1rem 1.1rem; overflow-x: auto; font-family: var(--mono);
+    font-size: 0.875rem; line-height: 1.6; margin: 0 0 1rem;
+  }
+  code { font-family: var(--mono); font-size: 0.9em; }
+  p code, li code {
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 0.1em 0.35em; border-radius: 4px;
+  }
+  ul { padding-left: 1.2rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.4rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin-bottom: 1rem; }
+  th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  td.num { font-family: var(--mono); color: var(--accent2); white-space: nowrap; }
+  .note {
+    border-left: 2px solid var(--accent2); background: var(--panel);
+    padding: 0.9rem 1.1rem; border-radius: 0 8px 8px 0; margin: 0 0 1.5rem;
+    font-size: 0.925rem;
+  }
+  .status { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0 0 2rem; padding: 0; list-style: none; }
+  .status li {
+    margin: 0; font-size: 0.8rem; font-family: var(--mono);
+    border: 1px solid var(--line); border-radius: 999px; padding: 0.2rem 0.7rem;
+    color: var(--dim);
+  }
+  .status li.ok { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+  footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--line); color: var(--dim); font-size: 0.875rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1><span class="k">v</span>lip</h1>
+  <p class="tag">A small Lisp dialect implemented in V, built around an explicit
+  CEK machine with real tail calls and an embeddable core.</p>
+
+  <ul class="status">
+    <li class="ok">reader</li>
+    <li class="ok">tail calls</li>
+    <li class="ok">closures</li>
+    <li class="ok">loop / dotimes</li>
+    <li class="ok">letrec</li>
+    <li>let*</li>
+    <li>rest params</li>
+    <li>modules</li>
+  </ul>
+
+  <div class="note">
+    <strong>Early, and honest about it.</strong> The reader and the machine run
+    real programs, and every test on this page is executed by CI. The remaining
+    pieces are listed rather than hidden — see
+    <a href="https://github.com/metif12/vlip/blob/main/docs/010-roadmap.md">the roadmap</a>.
+    This page is hand-written for now; the plan is to generate it from vlip
+    itself.
+  </div>
+
+  <h2>A taste</h2>
+<pre><code>(define (fib n)
+  (if (&lt; n 2)
+      n
+      (+ (fib (- n 1))
+         (fib (- n 2)))))
+
+(fib 20)          ;=&gt; 6765</code></pre>
+
+  <p>Only <code>#f</code> is false, as in R5RS and Clojure: <code>0</code>,
+  <code>""</code>, <code>nil</code> and <code>()</code> are all true. Ruby and
+  JavaScript say the opposite, which is why everyone arriving from them has to
+  relearn this.</p>
+
+  <h2>Tail calls are real, not bounded</h2>
+  <p>The machine keeps an explicit continuation stack on the heap and reuses the
+  frame in tail position instead of pushing. A loop does not grow the stack; it
+  grows nothing at all.</p>
+
+  <table>
+    <thead><tr><th>Test</th><th>Iterations</th><th>Result</th><th>Stack</th></tr></thead>
+    <tbody>
+      <tr><td>self tail call</td><td class="num">1,000,000</td><td class="num">1000000</td><td class="num">0</td></tr>
+      <tr><td>mutual tail call</td><td class="num">20,000</td><td class="num">pong</td><td class="num">0</td></tr>
+      <tr><td>tail call in <code>cond</code></td><td class="num">100,000</td><td class="num">100000</td><td class="num">0</td></tr>
+      <tr><td>tail call in <code>let</code></td><td class="num">50,000</td><td class="num">50000</td><td class="num">0</td></tr>
+      <tr><td><code>loop</code>, 20,000 rounds</td><td class="num">20,000</td><td class="num">199990000</td><td class="num">0</td></tr>
+    </tbody>
+  </table>
+
+  <p>A stack depth of <code>0</code> at the end is the point. If the loop were
+  recursive rather than iterative, that column would be <code>1,000,000</code>.</p>
+
+  <h2>Embedding</h2>
+  <p>The machine is a library, not a program. It holds no global state, it takes
+  the arena it reads into, and <code>print</code> output is collected into a
+  field instead of written to a terminal:</p>
+<pre><code>import vlib.vlip.reader
+import vlib.vlip.machine
+
+res := reader.read_all('(+ 1 2)')
+mut m := machine.new_machine(&amp;res.arena)
+value := m.run(res.forms)!
+println(value)   // 3</code></pre>
+
+  <p>The plan is a <code>Host</code> interface so that printing, reading and
+  loading come from the embedder rather than from the operating system, which is
+  also what makes a REPL testable without a terminal.</p>
+
+  <h2>Try it</h2>
+<pre><code>git clone https://github.com/metif12/vlip
+cd vlip
+v -cc gcc -o vlip.exe vlip.v
+.\vlip.exe examples\01_basics.lip</code></pre>
+
+  <p>Use <code>-cc gcc</code>: the default C backend in the pinned V release
+  fails to compile this checkout, and CI enforces the same flag so the two agree.</p>
+
+  <h2>Where it goes next</h2>
+  <ul>
+    <li>Errors become values. A panic in an embedded interpreter kills the host,
+        so there are no panics left on the evaluation path.</li>
+    <li>A REPL, with the same persistent machine the embedding story needs.</li>
+    <li>A Brainfuck interpreter, because it is the smallest program that requires
+        one interpreter to start another.</li>
+    <li>This website, generated by vlip and served through V's <code>veb</code>.</li>
+  </ul>
+
+  <footer>
+    Written in V. Design notes in
+    <a href="https://github.com/metif12/vlip/blob/main/docs/000-vlip-design.md">docs/000-vlip-design.md</a>,
+    plans in <a href="https://github.com/metif12/vlip/blob/main/docs/010-roadmap.md">docs/010-roadmap.md</a>.
+  </footer>
+
+</div>
+</body>
+</html>

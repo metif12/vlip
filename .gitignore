@@ -19,3 +19,7 @@
 .idea/
 *.swp
 .DS_Store
+# Test and probe binaries built during development
+tools/*.exe
+tmp/
+tests/out.txt

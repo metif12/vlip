@@ -33,11 +33,16 @@ fn main() {
 	files := os.args[1..]
 	if files.len == 0 {
 		println('usage: reader_probe <file.lip> ...')
-		return
+		exit(2)
 	}
 	mut total_diags := 0
+	mut unreadable := 0
 	for f in files {
 		src := os.read_file(f) or {
+			// Counting this as a failure is the whole point. An earlier version
+			// printed "cannot read" and carried on, then reported ALL FILES
+			// PARSED for zero files -- a green CI run that had checked nothing.
+			unreadable++
 			println('cannot read ${f}')
 			continue
 		}
@@ -92,9 +97,14 @@ fn main() {
 		}
 		println('')
 	}
+	if unreadable > 0 {
+		println('${unreadable} file(s) could not be read; nothing was verified')
+		exit(2)
+	}
 	if total_diags == 0 {
 		println('ALL FILES PARSED, zero diagnostics')
-	} else {
-		println('${total_diags} diagnostics')
+		exit(0)
 	}
+	println('${total_diags} diagnostics')
+	exit(1)
 }

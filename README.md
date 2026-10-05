@@ -22,28 +22,52 @@ annotations plus runtime contracts, and both are opt-in per program.
 
 ## Status
 
-Milestone **M0** — representation and skeleton. The compiler pipeline is not
-written yet; this stage settles the runtime value representation, which turned
-out to be constrained by the host language rather than by taste.
+Milestone **M3** — the CEK machine runs real programs with real tail calls.
+The reader parses all six example programs; the machine evaluates closures,
+arithmetic, branching, `loop`, `dotimes`, `letrec`, `cond` and `case`.
 
 | | |
 |---|---|
 | `docs/000-vlip-design.md` | the design document: motivation, language, architecture, trade-offs, comparisons |
-| `src/vlip/value.v` | the runtime `Value` representation |
-| `src/gc_probe.v` | regression probe: payloads must survive the GC |
-| `src/bench_value.v` | representation benchmark |
-| `src/probe_phases.v` | per-phase timings |
-| `src/probe_fnptr.v` | function-pointer call overhead |
+| `docs/010-roadmap.md` | embedding, the REPL, the example programs to write, and the veb final phase |
+| `vlib/vlip/` | the implementation: value representation, reader, printer, machine, primitives |
+| `examples/` | the six programs that define the syntax; all parse |
+| `tests/tail_calls.v` | tail-call and derived-form suite (17 passing) |
+| `tests/non_tail.v` | non-tail sibling calls, the case the environment bug hid in |
+| `tests/loop_forms.v` | `loop`, `dotimes` and `letrec` |
+
+Not working yet, and named in `docs/010-roadmap.md`: `let*`, rest parameters,
+and callable keywords. `let*` fails because `[...]` is a vector literal in value
+position and a binding group in form position, and the reader does not yet mark
+which reading applies.
+
+### Verified
+
+```text
+ok   self tail call 1e6 => 1000000  (steps=28000020, kont=0)
+ok   mutual tail call 2e4 => pong   (steps=400020,  kont=0)
+ok   tail in cond 1e5 => 100000     (steps=2900021,  kont=0)
+ok   non-tail fib => 6765           (steps=503488,   kont=0)
+ok   loop => 7                      (steps=185,      kont=0)
+```
+
+A stack depth of `0` at the end of a million tail calls is the whole point: the
+frame in tail position is reused rather than pushed.
 
 ## Build and test
 
-Requires V 0.5.2 (the v3-line compiler).
+Requires V 0.5.2 (the v3-line compiler). Use `-cc gcc`: the default C backend
+fails on this checkout, and CI uses the same flag.
 
 ```sh
-v -prod -o gc_probe.exe src/gc_probe.v && ./gc_probe.exe     # must print OK
-v -prod -o bench_value.exe src/bench_value.v && ./bench_value.exe
-v -prod -o probe_phases.exe src/probe_phases.v && ./probe_phases.exe
-v -prod -o probe_fnptr.exe src/probe_fnptr.v && ./probe_fnptr.exe
+v -cc gcc -o vlip.exe vlip.v                       # the CLI
+.\vlip.exe examples\01_basics.lip
+
+v -cc gcc -o tools\tail.exe tests\tail_calls.v     # the suite
+.\tools\tail.exe
+
+v -cc gcc -o reader_probe.exe reader_probe.v       # every example parses
+.\reader_probe.exe examples\*.lip
 ```
 
 ## Four findings from M0
@@ -75,17 +99,24 @@ Findings 1 and 2 are worth reporting upstream to the V project.
 
 | # | Deliverable |
 |---|---|
-| M0 | skeleton, `Value` representation, benchmarks — **in progress** |
-| M1 | reader: lexer and S-expression parser, spans, collected diagnostics |
-| M2 | values, printer, `equal?`, `hash` |
-| M3 | CEK machine — gate: 1M-call `fib`, 100k-deep `reverse`, no silent stack overflow |
-| M4 | special forms, core forms, ~40 primitives |
+| M0 | skeleton, `Value` representation, benchmarks — **done** |
+| M1 | reader: lexer and S-expression parser, spans, collected diagnostics — **done** |
+| M2 | values, printer, `equal?`, `hash` — **mostly done** |
+| M3 | CEK machine — gate: 1M-call `fib`, 100k-deep `reverse`, no silent stack overflow — **tail-call gate passed** |
+| M4 | special forms, core forms, ~40 primitives — **in progress** |
 | M5 | macros: `defmacro`, `gensym`, quasiquote, `macex1`/`macex` |
 | M6 | modules: `require`/`provide`, `only-in`, `prefix-in`, `for-syntax` |
 | M7 | standard library written in vlip |
 | M8 | ergonomics: `match`, `match*`, `use`, pipes, labelled args, `Result`, opaque types — gate: a real 300-line program with no macros |
 | M9 | tooling: REPL, span-carrying errors, formatter, `assert` as doc-tests |
 | M10 | contracts and optional erased annotations |
+
+The embedding plan, the REPL design, the example programs worth writing, and the
+veb-backed final phase are in `docs/010-roadmap.md`. The ordering there differs
+from this table in one respect: **errors become values before macros do.** A
+panic inside an embedded interpreter unwinds through the host and kills it, so
+that has to be true before anything can call vlip from V, and certainly before
+Lua.
 
 ## Design notes worth knowing
 
