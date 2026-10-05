@@ -22,21 +22,20 @@ jobs:
           # hides. Change this deliberately, not by accident.
           curl -fsSL https://github.com/vlang/v/releases/download/0.5.2/v_linux.zip -o v.zip
           unzip -q v.zip
-          # The archive's top-level `v` entry is a whole installation directory,
-          # not the executable: `install -m755 v` failed with "omitting
-          # directory", and copying out the binary alone produced
-          # "builtin/ not included on module lookup path", because V needs the
-          # vlib that sits beside it. Locate the directory holding the binary
-          # and let V install itself, which is what `v symlink` is for.
-          V_BIN="$(find . -maxdepth 3 -type f -name v -perm -u+x | head -n 1)"
-          if [ -z "$V_BIN" ]; then
-            echo "::error::no v executable found in the release archive"
-            find . -maxdepth 3 | head -50
-            exit 1
-          fi
-          cd "$(dirname "$V_BIN")"
-          chmod +x v
-          sudo ./v symlink
+          # The archive unpacks to a full V tree -- v/v, v/vlib/, v/makev.bat and
+          # so on -- not to a bare binary. Two wrong moves were tried first:
+          # `install -m755 v` fails with "omitting directory 'v'", and copying out
+          # just the executable installs fine but then every project import
+          # resolves against V's standard library instead of the project's, so
+          # `import vlib.vlip.reader` is reported as an unknown function.
+          #
+          # Install the whole tree at /usr/local/v and symlink the binary, which
+          # is the layout V expects: vlib sits beside the executable.
+          test -d v/vlib || { echo "::error::archive has no v/vlib"; exit 1; }
+          sudo rm -rf /usr/local/v
+          sudo mv v /usr/local/v
+          sudo chmod +x /usr/local/v/v
+          sudo ln -sf /usr/local/v/v /usr/local/bin/v
           v version
 
       # `-cc gcc` everywhere: the default C backend in the pinned V release
