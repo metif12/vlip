@@ -657,9 +657,30 @@ pub mut:
 	diags []Diagnostic
 }
 
-// read_all parses a whole source file into top-level forms.
-pub fn read_all(src string) ReadResult {
-	mut a := Arena{}
+// Forms is the result of reading into an arena someone else owns. It carries no
+// arena, because copying one would invalidate every NodeId in it.
+pub struct Forms {
+pub mut:
+	forms []NodeId
+	diags []Diagnostic
+}
+
+// read_forms parses `src` and appends every node it creates to this arena.
+//
+// This exists for one reason: a machine that evaluates a second file has to keep
+// the first file's nodes alive, because closures and continuation frames hold
+// NodeIds and nothing else. Reading into a fresh arena and swapping the machine's
+// pointer would leave every existing closure pointing at indices in the wrong
+// array -- silently, and only for code defined before the second read. Appending
+// to one arena costs the memory of every program the machine has ever run and is
+// correct by construction.
+//
+// It is a method rather than a free function taking `mut a &Arena` because that
+// spelling does not compile on V 0.5.2, and the alternative -- taking the arena by
+// value and trusting that V passes `mut` parameters by reference -- makes the
+// aliasing depend on a language rule, which is exactly the sort of thing this
+// project has been bitten by before.
+pub fn (mut a Arena) read_forms(src string) Forms {
 	mut r := Reader{
 		src:   src
 		arena: &a
@@ -675,9 +696,19 @@ pub fn read_all(src string) ReadResult {
 			break
 		}
 	}
-	return ReadResult{
-		arena: a
+	return Forms{
 		forms: forms
 		diags: r.diags
+	}
+}
+
+// read_all parses a whole source file into top-level forms, in a fresh arena.
+pub fn read_all(src string) ReadResult {
+	mut a := Arena{}
+	f := a.read_forms(src)
+	return ReadResult{
+		arena: a
+		forms: f.forms
+		diags: f.diags
 	}
 }

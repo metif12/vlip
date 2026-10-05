@@ -59,10 +59,18 @@ jobs:
           v -cc gcc -o tail tests/tail_calls.v
           v -cc gcc -o non_tail tests/non_tail.v
           v -cc gcc -o loop_forms tests/loop_forms.v
+          v -cc gcc -o binding_forms tests/binding_forms.v
+          v -cc gcc -o embedding tests/embedding.v
+          v -cc gcc -o repl_golden tests/repl_golden.v
+          v -cc gcc -o examples_run tests/examples_run.v
           set -o pipefail
-          ./tail | tee out.txt
-          ./non_tail | tee -a out.txt
-          ./loop_forms | tee -a out.txt
+          ./tail          | tee out.txt
+          ./non_tail      | tee -a out.txt
+          ./loop_forms    | tee -a out.txt
+          ./binding_forms | tee -a out.txt
+          ./embedding     | tee -a out.txt
+          ./repl_golden   | tee -a out.txt
+          ./examples_run  | tee -a out.txt
           if grep -qE '^FAIL|panic' out.txt; then
             echo "::error::refusing to release: a check failed"
             exit 1
