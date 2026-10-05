@@ -14,7 +14,13 @@ jobs:
 
       - name: Install V
         run: |
-          curl -fsSL https://github.com/vlang/v/releases/latest/download/v_linux.zip -o v.zip
+          # Pinned, not `latest`. This code targets V 0.5.2: it needs `-cc gcc`,
+          # and its module layout relies on that version's vlib lookup order. A
+          # newer compiler resolves `import vlib.vlip.reader` against its own
+          # standard library and reports "unknown function" for a module that
+          # compiles locally, which is exactly the kind of drift a green CI run
+          # hides. Change this deliberately, not by accident.
+          curl -fsSL https://github.com/vlang/v/releases/download/0.5.2/v_linux.zip -o v.zip
           unzip -q v.zip
           # The archive's top-level `v` entry is a whole installation directory,
           # not the executable: `install -m755 v` failed with "omitting
