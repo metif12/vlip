@@ -1,10 +1,10 @@
 name: release
 
-# Releases are cut from master only, by pushing a version tag.
+# Releases are cut from main only, by pushing a version tag.
 #
 # The trigger is a tag rather than a manual dispatch on purpose: a release that
 # can be produced from any branch is a release whose contents depend on which
-# branch someone happened to be standing on. master is the stable line, so the
+# branch someone happened to be standing on. main is the stable line, so the
 # tag is the only thing that decides what ships.
 on:
   push:

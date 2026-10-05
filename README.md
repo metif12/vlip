@@ -121,7 +121,7 @@ Lua.
 Section 7 of that document is the upkeep checklist: syncing against a new V,
 re-running the representation probes, and keeping the known-broken list honest.
 The compiler sync is the one that matters most, because this project does not
-target the `0.5.2` release — it targets vlang/v master at the commit pinned in
+target the `0.5.2` release — it targets vlang/v main at the commit pinned in
 `.github/workflows/ci.yml`, which resolves `vlib.vlip.*` against the project's
 own modules where the release build resolves it against V's standard library.
 
@@ -129,11 +129,11 @@ own modules where the release build resolves it against V's standard library.
 
 | Branch | Role |
 |---|---|
-| `master` | stable. Releases are cut from here by pushing a `v*` tag. Protected. |
+| `main` | stable. Releases are cut from here by pushing a `v*` tag. Protected. |
 | `dev` | integration. Pull requests land here. |
 | `<topic>` | a branch off `dev` |
 
-`master` moves only when a milestone's gate is met, so it stays something a
+`main` moves only when a milestone's gate is met, so it stays something a
 person can depend on. `release.yml` verifies on the tag — the same three suites a
 contributor runs locally — and builds the binaries and the generated site. A
 manual run of that workflow builds and verifies but does not publish, so a dry

@@ -12,26 +12,26 @@ quietly missing.
 ## Branches
 
 ```
-master   stable. Only releases come from here. Protected: no direct pushes.
+main   stable. Only releases come from here. Protected: no direct pushes.
 dev      integration. Where pull requests land.
 <topic>  a branch off dev, named after what it does
 ```
 
-- Branch off `dev`, not `master`.
+- Branch off `dev`, not `main`.
 - Open the pull request against `dev`.
-- `dev` is merged into `master` when a milestone's gate is met, and that merge is
+- `dev` is merged into `main` when a milestone's gate is met, and that merge is
   what a release is cut from.
-- A release is a tag on `master` (`v0.2.0`), pushed deliberately. `.github/workflows/release.yml`
+- A release is a tag on `main` (`v0.2.0`), pushed deliberately. `.github/workflows/release.yml`
   builds and verifies on the tag; a manual run of that workflow builds and
   verifies but never publishes, so a dry run cannot create a release by accident.
 
-Why two long-lived branches rather than one: `master` is what someone can depend
+Why two long-lived branches rather than one: `main` is what someone can depend
 on, so it has to move only when something is genuinely finished. With one branch,
 every half-finished interpreter is the thing people install.
 
 ## Build and test
 
-Requires V 0.5.2, specifically **vlang/v master at the commit pinned in
+Requires V 0.5.2, specifically **vlang/v main at the commit pinned in
 `.github/workflows/ci.yml`**. That is not pedantry — the `0.5.2` release build
 resolves `vlib.vlip.*` against V's own standard library and reports every module
 in this repository as an unknown function, for files that exist and compile

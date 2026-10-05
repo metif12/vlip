@@ -202,7 +202,7 @@ This is the highest-value recurring task and the one most likely to break
 silently.
 
 **Why it is delicate.** The project does not target the `0.5.2` *release*. It
-targets vlang/v **master at a pinned commit** (`V_COMMIT` in
+targets vlang/v **main at a pinned commit** (`V_COMMIT` in
 `.github/workflows/ci.yml`), which also self-reports as `V 0.5.2` but resolves
 modules differently: the release build looks `import vlib.vlip.reader` up in V's
 own standard library and reports every module here as an unknown function,
@@ -211,7 +211,7 @@ source changed; only the compiler did.
 
 **Procedure.**
 
-1. `git -C <v-install> fetch && git log --oneline HEAD..origin/master` and read
+1. `git -C <v-install> fetch && git log --oneline HEAD..origin/main` and read
    what moved. V's changelog is not a reliable summary of what affects
    codegen.
 2. Bump `V_COMMIT` in `.github/workflows/ci.yml`.
@@ -246,7 +246,7 @@ is exercising relative to the Windows development machine.
 Two things about the V installation are invisible in a passing build and very
 visible in a failing one. Both have already cost CI runs here.
 
-**The compiler is not the version.** `vlang/v` master and the `0.5.2` release
+**The compiler is not the version.** `vlang/v` main and the `0.5.2` release
 both print `V 0.5.2`. The build hash after it is what distinguishes them
 (`0137eb5` here). Pin `V_COMMIT` and read `v version` in the log.
 
