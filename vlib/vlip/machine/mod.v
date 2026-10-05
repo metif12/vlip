@@ -255,12 +255,24 @@ fn (mut m Machine) eval_symbol(name string) ! {
 		m.ret()
 		return
 	}
-	if name in m.prims {
+	if name in m.prims || machine_builtin(name) {
 		m.val = vlip.new_prim(name)
 		m.ret()
 		return
 	}
 	return error('unbound identifier: ${name}')
+}
+
+// builtins are the names call_primitive handles itself rather than through the
+// prims table, because each one needs the machine -- `apply` re-enters it, `error`
+// and `raise` abort, `format` and `gensym` read machine state.
+//
+// They have to be listed here as well as in call_primitive. They were not, and
+// `(error "boom")` therefore failed as "unbound identifier: error" before it ever
+// reached the application: the name did not resolve, so the abort path was dead
+// code for exactly the input it exists to handle.
+fn machine_builtin(name string) bool {
+	return name in ['apply', 'error', 'raise', 'format', 'gensym']
 }
 
 fn (mut m Machine) eval_list(id vlip.NodeId, kids []vlip.NodeId) ! {

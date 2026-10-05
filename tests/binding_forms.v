@@ -241,6 +241,20 @@ fn main() {
 	s.check_err('a binding value sees the enclosing scope, not the new one',
 		'(let ([a 1] [b (a 2)]) b)', 'unbound identifier: a')
 
+	// ---- (error ...) raises an error VALUE, it does not panic ----------
+	// `(panic "x")`-style input used to unwind through the embedding host and
+	// kill it. Every one of these has to come back as an `err` the caller can
+	// inspect, which is the whole gate on "errors become values".
+	s.check_err('error raises', '(error "boom")', 'boom')
+	s.check_err('raise raises', '(raise (error "boom"))', 'boom')
+	s.check_err('format inside error', '(error "at ~a" 99)', 'at 99')
+	s.check_err('unknown primitive', '(nope 1)', 'unbound identifier')
+	s.check_err('car of an integer', '(car 1)', 'expects a pair')
+	s.check_err('vector-ref out of range', '(vector-ref [1 2] 9)', 'out of range')
+	s.check_err('division by zero', '(/ 1 0)', 'division by zero')
+	s.check_err('compare incompatible', '(< 1 "a")', 'cannot compare')
+	s.check_err('add a string', '(+ 1 "a")', 'expects an integer')
+
 	if s.fails > 0 {
 		println('${s.fails} FAILURE(S)')
 		return
