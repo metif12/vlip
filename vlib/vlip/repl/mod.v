@@ -27,7 +27,7 @@ import vlib.vlip.printer
 import vlib.vlip.reader
 
 pub struct Repl {
-mut:
+pub mut:
 	machine   &machine.Machine
 	host      host.Host
 	buffer    string

@@ -1,0 +1,15 @@
+;; lib/geometry.vl -- the module examples/06_modules.lip requires.
+;;
+;; Resolution is FILE-RELATIVE to the requiring file, so `examples/06_modules.lip`
+;; says "lib/geometry.vl" and finds this. Nothing here knows where it was loaded
+;; from, which is what makes a package impossible to shadow with an unrelated file
+;; of the same name in the working directory.
+
+(struct Point (x y))
+
+(define (distance a b)
+  (sqrt (+ (* (- (point-x a) (point-x b)) (- (point-x a) (point-x b)))
+         (* (- (point-y a) (point-y b)) (- (point-y a) (point-y b))))))
+
+(define (area r)
+  (* 3.14159265358979 r r))

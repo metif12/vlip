@@ -37,10 +37,41 @@ fn usage() {
 // One machine, not one per file, is the difference between `vlip run prelude.lip
 // program.lip` working and reporting that everything the first file defined is
 // unbound in the second.
+
+// std_path is the standard library, loaded before every program.
+//
+// A language with a prelude is a language where print and string-upcase are names
+// rather than something every file has to require first. The examples assume it:
+// a call to parse-in is a call, and making every reader scroll past a require for
+// it would be the wrong default.
+//
+// It is loaded into the same machine as the program, so a program can rebind any
+// of it and the change is visible to a later file.
+fn std_path() string {
+	exe := os.executable()
+	dir := os.dir(exe)
+	// The binary sits in the repository root when built with the documented
+	// command, and one level up when it is put in tools/ during development.
+	for candidate in [os.join_path(dir, 'lib${os.path_separator}std.lip'),
+		os.join_path(os.dir(dir), 'lib${os.path_separator}std.lip')] {
+		if os.exists(candidate) {
+			return candidate
+		}
+	}
+	return ''
+}
+
 fn run_files(paths []string) int {
 	h := &host.ConsoleHost{}
 	mut m := machine.new_standalone(h)
 	mut code := 0
+	std := std_path()
+	if std != '' {
+		m.load(std) or {
+			eprintln('vlip: cannot load the standard library: ${err.msg()}')
+			code = 1
+		}
+	}
 	for path in paths {
 		src := os.read_file(path) or {
 			eprintln('vlip: cannot read ${path}')
@@ -79,16 +110,28 @@ fn test_file(path string) int {
 	return 0
 }
 
+// start_repl builds a REPL with the standard library already in it. The two ways
+// to start one -- bare `vlip` and `vlip repl` -- share it, so the two cannot end
+// up with different definitions.
+fn start_repl() int {
+	mut r := repl.new(&host.ConsoleHost{})
+	std := std_path()
+	if std != '' {
+		r.machine.load(std) or {
+			eprintln('vlip: cannot load the standard library: ${err.msg()}')
+		}
+	}
+	return r.run()
+}
+
 fn main() {
 	args := os.args[1..]
 	if args.len == 0 {
-		mut r := repl.new(&host.ConsoleHost{})
-		exit_code(r.run())
+		exit_code(start_repl())
 	}
 	match args[0] {
 		'repl' {
-			mut r := repl.new(&host.ConsoleHost{})
-			exit_code(r.run())
+			exit_code(start_repl())
 		}
 		'run' {
 			if args.len < 2 {

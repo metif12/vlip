@@ -1,12 +1,13 @@
 module prims
 
-// Primitive functions.
+// Primitive fntions.
 //
 // The signature deliberately does not take the machine. Builtins that need to
 // call back into the interpreter -- apply, map, format, error -- are handled by
 // the machine itself, which is what keeps this module free of any dependency on
 // it. Without that separation the two would be mutually dependent.
 
+import math
 import strconv
 import vlib.vlip
 import vlib.vlip.printer
@@ -84,6 +85,55 @@ pub fn table() map[string]vlip.PrimFn {
 	p['drop'] = prim_drop
 	p['first'] = prim_car
 	p['rest'] = prim_cdr
+	p['last'] = prim_last
+	p['not='] = prim_not_eq
+	p['eq?'] = prim_eqp
+	p['in?'] = prim_in
+	p['concat'] = prim_concat
+	p['range'] = prim_range
+	p['count'] = prim_count
+	p['sort'] = prim_sort
+	p['frequencies'] = prim_frequencies
+	p['vector-rev'] = prim_vector_rev
+	p['vector-append'] = prim_vector_append
+	p['vector-empty?'] = prim_vector_emptyp
+	p['vector-contains?'] = prim_vector_containsp
+	p['array-set!'] = prim_array_set
+	p['array-ref'] = prim_array_ref
+	p['array-push!'] = prim_array_push
+	p['array-pop!'] = prim_array_pop
+	p['array-length'] = prim_array_length
+	p['array-empty?'] = prim_array_emptyp
+	p['put!'] = prim_put_bang
+	p['dissoc!'] = prim_dissoc_bang
+	p['string-index-of'] = prim_string_index_of
+	p['string-not-blank?'] = prim_string_not_blank
+	p['string-contains?'] = prim_string_containsp
+	p['string-start-with?'] = prim_string_start_withp
+	p['string-join'] = prim_string_join
+	p['string-repeat'] = prim_string_repeat
+	p['string-slice'] = prim_string_slice
+	p['string-replace'] = prim_string_replace
+	p['string->symbol'] = prim_string_to_symbol
+	p['string->keyword'] = prim_string_to_keyword
+	p['boolean?'] = prim_booleanp
+	p['rune?'] = prim_runep
+	p['fntion?'] = prim_fntionp
+	p['procedure?'] = prim_fntionp
+	p['modulo'] = prim_modulo
+	p['quotient'] = prim_quotient
+	p['remainder'] = prim_remainder
+	p['gcd'] = prim_gcd
+	p['expt'] = prim_expt
+	p['sqrt'] = prim_sqrt
+	p['zero'] = prim_zero
+	p['inc'] = prim_inc
+	p['dec'] = prim_dec
+	p['struct?'] = prim_structp
+	p['struct-name'] = prim_struct_name
+	p['struct-ref'] = prim_struct_ref
+	p['struct-set!'] = prim_struct_set
+	p['__make-struct'] = prim_make_struct
 	return p
 }
 
@@ -317,6 +367,28 @@ pub fn value_eq(a vlip.Value, b vlip.Value) bool {
 			}
 			return true
 		}
+		.struct_ {
+			x := a.as_struct()
+			y := b.as_struct()
+			// Two struct instances are equal when they have the same NAME and equal
+			// fields. Comparing the names matters: a Point and a Coord with the same
+			// numbers are not interchangeable, and that is the whole point of a
+			// struct rather than a table.
+			if x.name != y.name || x.fields.len != y.fields.len {
+				return false
+			}
+			mut i := 0
+			for i < x.fields.len {
+				if x.fields[i] != y.fields[i] {
+					return false
+				}
+				if !value_eq(x.at(i), y.at(i)) {
+					return false
+				}
+				i++
+			}
+			return true
+		}
 		else { return false }
 	}
 }
@@ -381,6 +453,28 @@ fn list_slice(v vlip.Value) ![]vlip.Value {
 		guard++
 	}
 	return out
+}
+
+// seq flattens any sequence value into a Go-ish []Value, so the higher-order
+// primitives take a list, a vector or an array without each one repeating the
+// same three-way tag check.
+//
+// It returns lists as LISTS, not vectors. The obvious version returns vectors
+// everywhere, which silently changes the type of every result: `(map f '(1 2))`
+// would answer with a vector, and `(map f ...)` composed with `filter` and `fold`
+// would then need the result to be a list anyway.
+pub fn seq(v vlip.Value) ![]vlip.Value {
+	match v.tag {
+		.pair { return list_slice(v) }
+		.emptylist, .nil { return []vlip.Value{} }
+		.vector, .array { return v.as_vector().data.clone() }
+		else { return error('expected a sequence, got ${printer.write(v)}') }
+	}
+}
+
+// is_seq reports whether `v` is something the higher-order primitives can walk.
+pub fn is_seq(v vlip.Value) bool {
+	return v.tag in [.pair, .emptylist, .nil, .vector, .array]
 }
 
 fn prim_car(args []vlip.Value) !vlip.Value {
@@ -756,6 +850,82 @@ fn prim_number_to_string(args []vlip.Value) !vlip.Value {
 	return vlip.string(strconv.format_int(need_int('number->string', args[0])!, 10))
 }
 
+// ------------------------------------------------------------- structs
+//
+// The struct PRIMITIVES are here; the constructor, the predicate, the accessors
+// and the setters are generated as ordinary definitions by the machine's `struct`
+// form, because those are functions and this table only holds `!Value`
+// implementations. What lives here is the machinery they all need.
+
+fn prim_structp(args []vlip.Value) !vlip.Value {
+	return vlip.boolean(args[0].tag == .struct_)
+}
+
+fn prim_struct_name(args []vlip.Value) !vlip.Value {
+	if args[0].tag != .struct_ {
+		return error('struct-name: ${printer.write(args[0])} is not a struct')
+	}
+	return vlip.symbol(args[0].as_struct().name)
+}
+
+fn prim_struct_ref(args []vlip.Value) !vlip.Value {
+	if args[0].tag != .struct_ {
+		return error('struct-ref: ${printer.write(args[0])} is not a struct')
+	}
+	s := args[0].as_struct()
+	k := need_str('struct-ref', args[1])!
+	if !s.has(k) {
+		return error('struct-ref: ${s.name} has no field ${k}')
+	}
+	return s.get(k)
+}
+
+fn prim_struct_set(args []vlip.Value) !vlip.Value {
+	if args[0].tag != .struct_ {
+		return error('struct-set!: ${printer.write(args[0])} is not a struct')
+	}
+	s := args[0].as_struct()
+	k := need_str('struct-set!', args[1])!
+	if !s.has(k) {
+		return error('struct-set!: ${s.name} has no field ${k}')
+	}
+	return vlip.Value{
+		tag:     .struct_
+		payload: s.with(k, args[2])
+	}
+}
+
+// __make-struct is the constructor the `struct` form generates. It takes the name,
+// the field names, and the values, and returns an instance.
+fn prim_make_struct(args []vlip.Value) !vlip.Value {
+	if args.len < 2 {
+		return error('__make-struct needs a name and a field list')
+	}
+	name := need_str('__make-struct', args[0])!
+	mut fields := []string{}
+	fv := args[1]
+	if fv.tag == .vector {
+		d := fv.as_vector().data
+		mut i := 0
+		for i < d.len {
+			fields << need_str('__make-struct', d[i])!
+			i++
+		}
+	} else {
+		fields << name
+	}
+	if args.len - 2 != fields.len {
+		return error('__make-struct: ${name} has ${fields.len} field(s) but got ${args.len - 2} value(s)')
+	}
+	mut vals := map[string]vlip.Value{}
+	mut i := 0
+	for i < fields.len {
+		vals[fields[i]] = args[i + 2]
+		i++
+	}
+	return vlip.struct_value(name, fields, vals)
+}
+
 // ----------------------------------------------------------------- output
 //
 // `print` and `display` are NOT here. They used to be, and they wrote to stdout
@@ -772,4 +942,454 @@ fn show(a vlip.Value, quote_strings bool) string {
 
 fn prim_str(args []vlip.Value) !vlip.Value {
 	return vlip.string(show(args[0], true))
+}
+
+// ------------------------------------------------------- more sequences
+
+fn prim_last(args []vlip.Value) !vlip.Value {
+	items := seq(args[0])!
+	if items.len == 0 {
+		return vlip.nil_value()
+	}
+	return items[items.len - 1]
+}
+
+fn prim_not_eq(args []vlip.Value) !vlip.Value {
+	return vlip.boolean(!value_eq(args[0], args[1]))
+}
+
+// eq? is IDENTITY, not value equality, and for the values it can see that is the
+// same test. It exists because `=` is value equality on contents and some code
+// needs to say "the same thing" rather than "equal contents"; symbols and
+// keywords are interned, so `(eq? 'a 'a)` is true and so is `(eq? "a" "a")`.
+fn prim_eqp(args []vlip.Value) !vlip.Value {
+	return vlip.boolean(value_eq(args[0], args[1]))
+}
+
+// in? is `(= x coll)` for a collection, and it belongs here rather than in the
+// examples' own code because the examples use it.
+fn prim_in(args []vlip.Value) !vlip.Value {
+	items := seq(args[1]) or {
+		return error('in?: ${err.msg()}')
+	}
+	mut i := 0
+	for i < items.len {
+		if value_eq(args[0], items[i]) {
+			return vlip.boolean(true)
+		}
+		i++
+	}
+	return vlip.boolean(false)
+}
+
+fn prim_concat(args []vlip.Value) !vlip.Value {
+	mut out := []vlip.Value{}
+	for a in args {
+		part := seq(a)!
+		for p in part {
+			out << p
+		}
+	}
+	return vlip.list_from(out)
+}
+
+// range is INCLUSIVE of `stop`, because that is what a loop counter means here.
+// The alternative -- exclusive, as in Python -- makes `(range 0 10)` produce nine
+// values and every off-by-one in the examples becomes a mystery.
+fn prim_range(args []vlip.Value) !vlip.Value {
+	mut from := i64(0)
+	mut to := i64(0)
+	if args.len == 1 {
+		to = need_int('range', args[0])!
+	} else {
+		from = need_int('range', args[0])!
+		to = need_int('range', args[1])!
+	}
+	mut out := []vlip.Value{}
+	mut i := from
+	for i <= to {
+		out << vlip.integer(i)
+		i++
+	}
+	return vlip.list_from(out)
+}
+
+
+
+fn prim_count(args []vlip.Value) !vlip.Value {
+	return vlip.integer(seq(args[0])!.len)
+}
+
+fn prim_sort(args []vlip.Value) !vlip.Value {
+	items := seq(args[0])!
+	mut ordered := items.clone()
+	// Insertion sort rather than a general one: these lists are small, and a
+	// comparison failure has to name the two values that would not compare.
+	mut i := 1
+	for i < ordered.len {
+		mut j := i
+		for j > 0 && compare(ordered[j - 1], ordered[j])! > 0 {
+			tmp := ordered[j - 1]
+			ordered[j - 1] = ordered[j]
+			ordered[j] = tmp
+			j--
+		}
+		i++
+	}
+	return vlip.list_from(ordered)
+}
+
+// sort_by takes a KEY fntion, which needs the machine, so this is only the
+// key-extracting half: the machine calls key on each element first.
+pub fn sort_by_keyed(items []vlip.Value, keys []vlip.Value) !vlip.Value {
+	mut order := []int{}
+	mut i := 0
+	for i < items.len {
+		order << i
+		i++
+	}
+	mut a := 0
+	for a < order.len {
+		mut b := a
+		for b > 0 && compare(keys[order[b - 1]], keys[order[b]])! > 0 {
+			tmp := order[b - 1]
+			order[b - 1] = order[b]
+			order[b] = tmp
+			b--
+		}
+		a++
+	}
+	mut out := []vlip.Value{}
+	for idx in order {
+		out << items[idx]
+	}
+	return vlip.list_from(out)
+}
+
+
+// frequencies returns a table of symbol/count pairs, as
+// (get e 0) and (get e 1) read it. A table of counts would force a get for the
+// count and a has-key? for the membership, and the examples read it with `car` and
+// `(get e 1)`.
+fn prim_frequencies(args []vlip.Value) !vlip.Value {
+	items := seq(args[0])!
+	mut counts := map[string]vlip.Value{}
+	mut order := []string{}
+	mut i := 0
+	for i < items.len {
+		key := printer.write(items[i])
+		if key !in counts {
+			order << key
+			counts[key] = vlip.integer(0)
+		}
+		old := counts[key].as_int()
+		counts[key] = vlip.integer(old + 1)
+		i++
+	}
+	mut out := []vlip.Value{}
+	for k in order {
+		out << vlip.list_from([vlip.string(k), counts[k]])
+	}
+	return vlip.list_from(out)
+}
+
+// ------------------------------------------------------------- vectors
+
+fn as_vector_value(v vlip.Value, name string) !&vlip.Vector {
+	if !(v.tag in [.vector, .array]) {
+		return error('${name} expects a vector or array, got ${printer.write(v)}')
+	}
+	return v.as_vector()
+}
+
+
+fn prim_vector_rev(args []vlip.Value) !vlip.Value {
+	data := as_vector_value(args[0], 'vector-rev')!.data
+	mut out := []vlip.Value{}
+	mut i := data.len - 1
+	for i >= 0 {
+		out << data[i]
+		i--
+	}
+	return vlip.vector(out)
+}
+
+fn prim_vector_append(args []vlip.Value) !vlip.Value {
+	mut out := []vlip.Value{}
+	for a in args {
+		d := as_vector_value(a, 'vector-append')!.data
+		for x in d {
+			out << x
+		}
+	}
+	return vlip.vector(out)
+}
+
+fn prim_vector_emptyp(args []vlip.Value) !vlip.Value {
+	return vlip.boolean(as_vector_value(args[0], 'vector-empty?')!.data.len == 0)
+}
+
+fn prim_vector_containsp(args []vlip.Value) !vlip.Value {
+	data := as_vector_value(args[0], 'vector-contains?')!.data
+	mut i := 0
+	for i < data.len {
+		if value_eq(data[i], args[1]) {
+			return vlip.boolean(true)
+		}
+		i++
+	}
+	return vlip.boolean(false)
+}
+
+// --------------------------------------------------------------- arrays
+
+// The mutable sequence primitives mutate through the payload's slice. V slices
+// are descriptors, so `v.data[i] = x` writes into the shared backing array -- but
+// only if the slice has spare capacity. `<<` grows it in place when it does, so
+// the mutation primitives always go through `<<` first.
+fn prim_array_set(args []vlip.Value) !vlip.Value {
+	vec := as_vector_value(args[0], 'array-set!')!
+	i := need_int('array-set!', args[1])!
+	if i < 0 || i >= vec.data.len {
+		return error('array-set!: index ${i} out of range (length ${vec.data.len})')
+	}
+	vec.set_at(int(i), args[2])
+	return vlip.nil_value()
+}
+
+fn prim_array_ref(args []vlip.Value) !vlip.Value {
+	return prim_vector_ref(args)
+}
+
+fn prim_array_length(args []vlip.Value) !vlip.Value {
+	return vlip.integer(as_vector_value(args[0], 'array-length')!.data.len)
+}
+
+fn prim_array_emptyp(args []vlip.Value) !vlip.Value {
+	return vlip.boolean(as_vector_value(args[0], 'array-empty?')!.data.len == 0)
+}
+
+fn prim_array_push(args []vlip.Value) !vlip.Value {
+	vec := as_vector_value(args[0], 'array-push!')!
+	vec.push(args[1])
+	return args[0]
+}
+
+fn prim_array_pop(args []vlip.Value) !vlip.Value {
+	vec := as_vector_value(args[0], 'array-pop!')!
+	if vec.data.len == 0 {
+		return error('array-pop!: the array is empty')
+	}
+	return vec.pop()
+}
+
+// --------------------------------------------------------------- buffers
+
+fn prim_put_bang(args []vlip.Value) !vlip.Value {
+	if args[0].tag != .buffer {
+		return error('put! expects a buffer, got ${printer.write(args[0])}')
+	}
+	args[0].as_table().set_at(need_str('put!', args[1])!, args[2])
+	// A mutation returns nothing. Returning the buffer invites `(define b2
+	// (put! b ...))`, which looks like it copies and is not.
+	return vlip.nil_value()
+}
+
+fn prim_dissoc_bang(args []vlip.Value) !vlip.Value {
+	if args[0].tag != .buffer {
+		return error('dissoc! expects a buffer, got ${printer.write(args[0])}')
+	}
+	args[0].as_table().delete_at(need_str('dissoc!', args[1])!)
+	return args[0]
+}
+
+// ---------------------------------------------------------------- strings
+
+fn prim_string_index_of(args []vlip.Value) !vlip.Value {
+	hay := need_str('string-index-of', args[0])!
+	if args[1].tag == .rune {
+		needle := rune_bytes(args[1].as_int())
+		i := hay.index(needle) or { return vlip.integer(-1) }
+		return vlip.integer(i64(i))
+	}
+	needle := need_str('string-index-of', args[1])!
+	i := hay.index(needle) or { return vlip.integer(-1) }
+	return vlip.integer(i64(i))
+}
+
+fn rune_bytes(cp i64) string {
+	mut buf := []u8{}
+	buf << u8(cp)
+	return buf.bytestr()
+}
+
+fn prim_string_not_blank(args []vlip.Value) !vlip.Value {
+	return vlip.boolean(need_str('string-not-blank?', args[0])!.trim_space() != '')
+}
+
+fn prim_string_containsp(args []vlip.Value) !vlip.Value {
+	hay := need_str('string-contains?', args[0])!
+	needle := need_str('string-contains?', args[1])!
+	return vlip.boolean(hay.contains(needle))
+}
+
+fn prim_string_start_withp(args []vlip.Value) !vlip.Value {
+	return vlip.boolean(need_str('string-start-with?', args[0])!
+		.starts_with(need_str('string-start-with?', args[1])!))
+}
+
+fn prim_string_join(args []vlip.Value) !vlip.Value {
+	items := seq(args[0])!
+	mut sep := ''
+	if args.len > 1 {
+		sep = need_str('string-join', args[1])!
+	}
+	mut out := []u8{}
+	mut i := 0
+	for i < items.len {
+		if i > 0 {
+			out << sep.bytes()
+		}
+		out << need_str('string-join', items[i])!.bytes()
+		i++
+	}
+	return vlip.string(out.bytestr())
+}
+
+fn prim_string_repeat(args []vlip.Value) !vlip.Value {
+	return vlip.string(need_str('string-repeat', args[0])!.repeat(int(need_int('string-repeat', args[1])!)))
+}
+
+fn prim_string_slice(args []vlip.Value) !vlip.Value {
+	s := need_str('string-slice', args[0])!
+	start := need_int('string-slice', args[1])!
+	end := need_int('string-slice', args[2])!
+	lo := clamp(start, 0, i64(s.len))
+	hi := clamp(end, lo, i64(s.len))
+	return vlip.string(s[int(lo)..int(hi)])
+}
+
+fn prim_string_replace(args []vlip.Value) !vlip.Value {
+	s := need_str('string-replace', args[0])!
+	return vlip.string(s.replace(need_str('string-replace', args[1])!,
+		need_str('string-replace', args[2])!))
+}
+
+fn prim_string_to_symbol(args []vlip.Value) !vlip.Value {
+	return vlip.symbol(need_str('string->symbol', args[0])!)
+}
+
+fn prim_string_to_keyword(args []vlip.Value) !vlip.Value {
+	return vlip.keyword(need_str('string->keyword', args[0])!)
+}
+
+// ------------------------------------------------------------- predicates
+
+fn prim_booleanp(args []vlip.Value) !vlip.Value {
+	return vlip.boolean(args[0].tag == .boolean)
+}
+
+fn prim_runep(args []vlip.Value) !vlip.Value {
+	return vlip.boolean(args[0].tag == .rune)
+}
+
+fn prim_fntionp(args []vlip.Value) !vlip.Value {
+	return vlip.boolean(args[0].tag in [.closure, .primitive])
+}
+
+// ------------------------------------------------------------- arithmetic
+
+fn prim_modulo(args []vlip.Value) !vlip.Value {
+	b := need_int('modulo', args[1])!
+	if b == 0 {
+		return error('modulo by zero')
+	}
+	a := need_int('modulo', args[0])!
+	mut m := a % b
+	// V's % keeps the sign of the dividend. `modulo` is the floored one, so
+	// (modulo -1 3) is 2 rather than -1.
+	if m != 0 && (m < 0) != (b < 0) {
+		m += b
+	}
+	return vlip.integer(m)
+}
+
+fn prim_quotient(args []vlip.Value) !vlip.Value {
+	b := need_int('quotient', args[1])!
+	if b == 0 {
+		return error('quotient by zero')
+	}
+	a := need_int('quotient', args[0])!
+	mut q := a / b
+	if (a % b) != 0 && (a < 0) != (b < 0) {
+		q--
+	}
+	return vlip.integer(q)
+}
+
+fn prim_remainder(args []vlip.Value) !vlip.Value {
+	b := need_int('remainder', args[1])!
+	if b == 0 {
+		return error('remainder by zero')
+	}
+	return vlip.integer(need_int('remainder', args[0])! % b)
+}
+
+fn prim_gcd(args []vlip.Value) !vlip.Value {
+	mut a := need_int('gcd', args[0])!
+	if a < 0 {
+		a = -a
+	}
+	mut b := need_int('gcd', args[1])!
+	if b < 0 {
+		b = -b
+	}
+	for b != 0 {
+		t := a % b
+		a = b
+		b = t
+	}
+	return vlip.integer(a)
+}
+
+fn prim_expt(args []vlip.Value) !vlip.Value {
+	if args[0].tag == .float || args[1].tag == .float {
+		return vlip.float(math.pow(as_f64(args[0])!, as_f64(args[1])!))
+	}
+	mut out := i64(1)
+	mut base := need_int('expt', args[0])!
+	mut n := need_int('expt', args[1])!
+	if n < 0 {
+		return error('expt: a negative exponent is not an integer')
+	}
+	for n > 0 {
+		if n & 1 == 1 {
+			out *= base
+		}
+		base *= base
+		n /= 2
+	}
+	return vlip.integer(out)
+}
+
+fn prim_sqrt(args []vlip.Value) !vlip.Value {
+	f := as_f64(args[0])!
+	if f < 0.0 {
+		return error('sqrt of a negative number')
+	}
+	return vlip.float(math.sqrt(f))
+}
+
+fn prim_inc(args []vlip.Value) !vlip.Value {
+	if args[0].tag == .float {
+		return vlip.float(args[0].as_float() + 1.0)
+	}
+	return vlip.integer(need_int('inc', args[0])! + 1)
+}
+
+fn prim_dec(args []vlip.Value) !vlip.Value {
+	if args[0].tag == .float {
+		return vlip.float(args[0].as_float() - 1.0)
+	}
+	return vlip.integer(need_int('dec', args[0])! - 1)
 }

@@ -360,6 +360,34 @@ c := r.peek()
 			r.next()
 			return r.read_collection(.table, rbrace)
 		}
+		at_c {
+			// `@(...)`, `@[...]`, `@{...}` -- the mutable counterparts of the three
+			// literal collection forms. The tag is on the VALUE, which is how
+			// mutability is made visible without a type system: `@(1 2 3)` is an
+			// array and `(1 2 3)` is a list.
+			//
+			// Without this the `@` read as an ordinary symbol and the collection
+			// after it as an ordinary list, so `@(1 2 3)` failed at the symbol `@`
+			// with "unbound identifier: @" -- which says nothing about where the
+			// problem is.
+			nxt := r.at(r.off + 1)
+			if nxt == lparen {
+				r.next()
+				r.next()
+				return r.read_collection(.array, rparen)
+			}
+			if nxt == lbrack {
+				r.next()
+				r.next()
+				return r.read_collection(.array, rbrack)
+			}
+			if nxt == lbrace {
+				r.next()
+				r.next()
+				return r.read_collection(.buffer, rbrace)
+			}
+			return r.read_atom()
+		}
 		rparen | rbrack | rbrace {
 			r.fail('unexpected byte 0x' + c.hex())
 			r.next()
@@ -395,7 +423,30 @@ tag := match c {
 			return r.read_string()
 		}
 		`|` {
-			return r.read_bar_symbol()
+			// `|...|` is a symbol written literally, but `|>`, `|*>`, `||` and the
+			// rest are OPERATORS, and the two are told apart by what follows the
+			// bar: a space or a closing bracket means a literal symbol, anything else
+			// means an operator name that ends at the next delimiter.
+			//
+			// Without this, `(->> x |> string-upcase)` read `|> string-upcase ` as
+			// one bar-symbol and then reported `unbound identifier: > string-upcase`.
+			// The reader's own diagnostic count was zero, which is the useful part:
+			// `|>` is a perfectly valid token, just the wrong one.
+			nxt := r.at(r.off + 1)
+			if nxt == u8(0) || nxt == sp || nxt == tab_c || nxt == nl || nxt == cr
+				|| nxt == rparen || nxt == rbrack || nxt == rbrace {
+				return r.read_bar_symbol()
+			}
+			mut op := []u8{}
+			for !r.eof() {
+				ch := r.peek()
+				if ch == sp || ch == tab_c || ch == nl || ch == cr || ch == rparen
+					|| ch == rbrack || ch == rbrace {
+					break
+				}
+				op << r.next()
+			}
+			return r.arena.str_leaf(.sym, op.bytestr())
 		}
 		`#` {
 			return r.read_hash()

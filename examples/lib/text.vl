@@ -1,0 +1,9 @@
+;; lib/text.vl -- the second module examples/06_modules.lip requires.
+
+(define DEFAULT-GREETING "Hello")
+
+(define (greeting name)
+  (format "~a, ~a." DEFAULT-GREETING name))
+
+(define (upper s)
+  (string-upcase s))

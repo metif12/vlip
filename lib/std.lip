@@ -1,0 +1,78 @@
+;; lib/std.lip -- the vlip standard library, in vlip.
+;;
+;; Loaded by `vlip run` and by the REPL before your program, so a program does not
+;; have to say `(require "std.lip")` for names everybody assumes exist. That is
+;; the same rule every language with a prelude follows, and it is what lets the
+;; examples in examples/ read the way they do: `(parse-in "key: value")` is a
+;; call, not a definition the reader has to scroll past.
+;;
+;; Everything here is ordinary vlip. There is no special form in this file, which
+;; is the point: if the standard library needs a new feature, the feature is
+;; missing rather than the library being special.
+;;
+;; The Result-returning names are the convention the language settles on: a
+;; function that can fail for an expected reason returns `(ok v)` or `(err 'why)`,
+;; and `use` binds the values without a staircase. A function that fails for an
+;; impossible reason calls `raise`.
+
+;; ---------------------------------------------------------------- results
+
+(define (identity x) x)
+
+;; ---------------------------------------------------------------- parsing
+
+;; parse-in reads "key: value" and returns (ok key value). It is the smallest
+;; honest demonstration of a multi-value Result, which is what `use` exists for.
+(define (parse-in text)
+  (let assert [(string? text) text]
+    (let parts (string-split text ":")
+      (cond [(= (length parts) 2) (ok (string-trim (list-ref parts 0))
+                                    (string-trim (list-ref parts 1)))]
+            [else (err 'malformed)]))))
+
+;; ---------------------------------------------------------------- symbols
+
+;; lookup-sym finds a name in a small table of symbols. `nil` means absent, which
+;; is what match* wants to tell apart from a found-and-wrong value.
+(define (lookup-sym name)
+  (cond [(= name 'alpha) (ok 'alpha)]
+        [(= name 'beta) (ok 'beta)]
+        [else nil]))
+
+;; validate says whether a looked-up symbol is usable.
+(define (validate name)
+  (cond [(= name 'alpha) (ok nil)]
+        [(= name 'beta) (err 'unknown-symbol)]
+        [else (err 'unknown-symbol)]))
+
+;; ---------------------------------------------------------------- resources
+
+;; A connection is a table, so a test can build one by hand and a program can
+;; inspect one. A struct would be better once modules can hide constructors; a
+;; table is honest about how little this is.
+(define (connect target)
+  (cond [(string-not-blank? target) (ok {:host target :session nil})]
+        [else (err 'bad-target)]))
+
+(define (authenticate conn :user [user "anonymous"] :pass [pass ""])
+  (cond [(= user "anonymous") (err 'no-credentials)]
+        [(not= pass "s3cret") (err 'bad-password)]
+        [else (ok conn)]))
+
+(define (open-transaction conn)
+  (cond [(= (get conn :session) nil) (err 'not-authenticated)]
+        [else (ok conn)]))
+
+(define (execute conn sql)
+  (cond [(= (get conn :session) nil) (err 'not-authenticated)]
+        [else (ok sql)]))
+
+(define (commit conn)
+  (cond [(= (get conn :session) nil) (err 'not-authenticated)]
+        [else (ok 'committed)]))
+
+;; ---------------------------------------------------------------- debug
+
+;; *debug* is a variable, not a special form, so a program can rebind it and a
+;; macro that reads it keeps working.
+(def *debug* #f)

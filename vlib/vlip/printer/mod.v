@@ -50,6 +50,18 @@ fn write_value(v vlip.Value, active []u64, seen map[u64]int, depth int) string {
 		.pair { return write_list(v, active, seen, depth) }
 		.vector { return write_vector(v, active, seen, depth) }
 		.table { return write_table(v, active, seen, depth) }
+		.struct_ {
+			s := v.as_struct()
+			mut parts := []string{}
+			mut i := 0
+			for i < s.fields.len {
+				parts << write_value(s.at(i), active, seen, depth + 1)
+				i++
+			}
+			// Field order is the declaration order, NOT sorted: a struct prints the
+			// way it was written, which is what makes a wrong value obvious.
+			return '(' + s.name + ' ' + parts.join(' ') + ')'
+		}
 		.array { return '@[' + write_seq(v, active, seen, depth) + ']' }
 		.buffer { return '@{' + write_table_body(v, active, seen, depth) + '}' }
 		.closure { return '#<closure>' }
