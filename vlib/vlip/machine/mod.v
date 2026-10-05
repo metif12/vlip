@@ -107,27 +107,15 @@ fn (mut m Machine) drive() !vlip.Value {
 		if m.kstack.len > m.max_kont {
 			return error('continuation too deep: non-tail recursion is too deep')
 		}
-		match m.ctl {
-			.eval_form {
-				m.step_eval()!
-			}
-			.return_value {
-				if !m.step_return() {
-					return m.val
-				}
-			}
-			else {
-				panic('machine: unknown control state ${m.ctl}')
-			}
+		// Two control states, so this is an if rather than a match. V 0.5.2
+		// demands an `else` arm on a match over an enum even when every value is
+		// covered, and there is no honest third state to put there.
+		if m.ctl == .eval_form {
+			m.step_eval()!
+		} else if !m.step_return()! {
+			return m.val
 		}
 	}
-}
-
-// fatal renders an abort message. Used where continuing would be worse than
-// stopping: an unbound identifier in a compiled program is a bug, not a
-// recoverable condition.
-fn (m &Machine) fatal(msg string) string {
-	return msg
 }
 
 // kont builds a continuation frame. The env field inside Kont is a reference
@@ -159,9 +147,13 @@ fn (mut m Machine) goto(form vlip.NodeId) {
 	m.ctl = .eval_form
 }
 
-fn (mut m Machine) err(msg string) ! {
-	return error(msg)
-}
+// Every failure in the machine is spelled `return error(msg)`.
+//
+// A helper such as `fn (m &Machine) err(msg string) !` is tempting and does not
+// work: V 0.5.2 cannot infer a generic type parameter from the enclosing
+// function's return type, so a generic `err[T]` has to be written `err[bool](..)`
+// at every site -- more typing than `error(...)` and easier to get wrong. The
+// built-in `error` is already generic and already inferred, so it wins.
 
 // ------------------------------------------------------------------- EVAL
 
@@ -221,7 +213,9 @@ fn (mut m Machine) step_eval() ! {
 		.list {
 			kids := m.arena.kids(id)
 			if kids.len == 0 {
-				m.val = vlip.nil_value()
+				// `()` is the empty list, not nil: a form has to produce the
+				// value it reads as, and the examples assert `(list) ;=> ()`.
+				m.val = vlip.empty_list()
 				m.ret()
 				return
 			}
@@ -261,12 +255,24 @@ fn (mut m Machine) eval_symbol(name string) ! {
 		m.ret()
 		return
 	}
-	if name in m.prims {
+	if name in m.prims || machine_builtin(name) {
 		m.val = vlip.new_prim(name)
 		m.ret()
 		return
 	}
-	return m.err('unbound identifier: ${name}')
+	return error('unbound identifier: ${name}')
+}
+
+// builtins are the names call_primitive handles itself rather than through the
+// prims table, because each one needs the machine -- `apply` re-enters it, `error`
+// and `raise` abort, `format` and `gensym` read machine state.
+//
+// They have to be listed here as well as in call_primitive. They were not, and
+// `(error "boom")` therefore failed as "unbound identifier: error" before it ever
+// reached the application: the name did not resolve, so the abort path was dead
+// code for exactly the input it exists to handle.
+fn machine_builtin(name string) bool {
+	return name in ['apply', 'error', 'raise', 'format', 'gensym']
 }
 
 fn (mut m Machine) eval_list(id vlip.NodeId, kids []vlip.NodeId) ! {
@@ -290,7 +296,12 @@ fn (mut m Machine) eval_list(id vlip.NodeId, kids []vlip.NodeId) ! {
 
 // step_return handles one value coming back. It returns false when the
 // continuation stack is empty, which is the machine's answer.
-fn (mut m Machine) step_return() bool {
+//
+// `!` is in the signature because applying a callable can fail -- a wrong arity,
+// a keyword applied to something that is not a collection -- and a failure has
+// to be a returned error. It used to be a panic, which unwound through the
+// embedding host and killed it.
+fn (mut m Machine) step_return() !bool {
 	if m.kstack.len == 0 {
 		return false
 	}
@@ -302,7 +313,7 @@ fn (mut m Machine) step_return() bool {
 				// zero arguments
 				mut all := []vlip.Value{}
 				all << m.val
-				m.apply_all(all)
+				m.apply_all(all)!
 			} else {
 				mut k2 := m.kont(.app_arg)
 				k2.rest = k.rest
@@ -330,7 +341,7 @@ fn (mut m Machine) step_return() bool {
 				m.env = k.env
 				m.goto(kids[k.acc.len])
 			} else {
-				m.apply_all(k.acc)
+				m.apply_all(k.acc)!
 			}
 		}
 		.if_k {
@@ -371,13 +382,29 @@ fn (mut m Machine) step_return() bool {
 			}
 		}
 		.define_k {
+			// Restore the scope the `define` was WRITTEN in. Without this,
+			// `(define g (make-thunk))` binds `g` inside the thunk's frame --
+			// which is gone by the time anyone looks for it. It reported as
+			// "unbound identifier: g" and was invisible to every tail-call test,
+			// because a global define at top level has m.env == m.globals and
+			// the frame the value came back in happens to be the wrong one only
+			// when the value was produced by a call.
+			m.env = k.env
 			m.envs.define(m.env, k.name, m.val)
 			m.val = vlip.symbol(k.name)
 			m.ret()
 		}
 		.set_k {
+			// Same restoration as .define_k, and for the same reason:
+			// `(set! x (f y))` must assign x in the scope it was written in, not
+			// in f's frame.
+			m.env = k.env
 			if !m.envs.set(m.env, k.name, m.val) {
-
+				// `set!` on a name that was never bound is an error, not a
+				// silent no-op. The obvious alternative -- ignoring it -- turns a
+				// typo into a value that quietly stays wrong for the rest of the
+				// program.
+				return error('set! cannot assign to unbound identifier: ${k.name}')
 			}
 			m.val = vlip.nil_value()
 			m.ret()
@@ -413,8 +440,11 @@ fn (mut m Machine) step_return() bool {
 			}
 		}
 		else {
-			// .done is never pushed, so reaching it means the machine is broken.
-			panic('machine: unexpected continuation ${k.tag}')
+			// .done is never pushed. Reaching it means the continuation stack was
+			// corrupted by something that was not a Kont, which is a bug in this
+			// interpreter rather than in the program -- so it is still an error
+			// value, because the host must survive it either way.
+			return error('machine: unexpected continuation ${k.tag}')
 		}
 	}
 	return true
@@ -422,7 +452,14 @@ fn (mut m Machine) step_return() bool {
 
 // -------------------------------------------------------------- application
 
-fn (mut m Machine) apply_all(all_in []vlip.Value) {
+// apply_all applies `all_in[0]` to the rest.
+//
+// Keyword application is the one non-obvious case. `(:a {:a 1})` is defined to
+// mean `(:a {:a 1})` as a lookup, so a keyword in operator position is a key and
+// the single argument is the collection. The alternative -- treating an
+// unapplied keyword as nil, which is what the first version did -- turns the
+// single most common Lisp idiom into a nil call.
+fn (mut m Machine) apply_all(all_in []vlip.Value) ! {
 	mut all := all_in.clone()
 	callee := all[0]
 	mut args := []vlip.Value{}
@@ -431,47 +468,89 @@ fn (mut m Machine) apply_all(all_in []vlip.Value) {
 	}
 	match callee.tag {
 		.closure {
-			m.call_closure(callee.as_closure(), args)
+			m.call_closure(callee.as_closure(), args)!
 		}
 		.primitive {
-			m.call_primitive(callee.as_string(), args)
+			m.call_primitive(callee.as_string(), args)!
+		}
+		.keyword, .string, .symbol {
+			// A key used in operator position looks itself up in the one
+			// argument. `(:a {:a 1})` and `(:a m)` are the same call.
+			if args.len != 1 {
+				return error('a key used as a function takes 1 argument, got ${args.len}')
+			}
+			m.val = m.lookup_key(callee.as_string(), args[0])!
+			m.ret()
 		}
 		.table, .buffer {
 			if args.len != 1 {
-				panic('a table used as a function takes 1 argument, got ')
+				return error('a table used as a function takes 1 argument, got ${args.len}')
 			}
-			if !(args[0].tag in [.keyword, .string]) {
-				panic('a table lookup needs a keyword, got ')
+			m.val = m.lookup_key(args[0].as_string(), callee)!
+			m.ret()
+		}
+		.array, .vector {
+			if args.len != 1 || args[0].tag != .integer {
+				return error('an array used as a function takes 1 integer argument')
 			}
-			m.val = callee.as_table().get(args[0].as_string())
+			data := callee.as_vector().data
+			idx := args[0].as_int()
+			if idx < 0 || idx >= data.len {
+				return error('array index ${idx} out of range (length ${data.len})')
+			}
+			m.val = data[idx]
 			m.ret()
 		}
 		else {
-			panic('cannot apply : not a function')
+			return error('cannot apply ${printer.write(callee)}: not a function')
 		}
 	}
 }
 
-fn (mut m Machine) call_closure(c &vlip.Closure, args []vlip.Value) {
-	// A trailing `rest` parameter collects the remaining arguments.
-	if c.params.len > 0 && c.params[c.params.len - 1] == 'rest' {
-		fixed := c.params[..c.params.len - 1]
-		if args.len < fixed.len {
-			panic(': expected at least  arguments, got ')
+// lookup_key is the one collection lookup every callable-collection path shares.
+// `key` is already a string; the caller has decided where it came from.
+fn (mut m Machine) lookup_key(key string, coll vlip.Value) !vlip.Value {
+	match coll.tag {
+		.table, .buffer {
+			return coll.as_table().get(key)
+		}
+		.array, .vector {
+			n := coll.as_vector().data.len
+			i := strconv.atoi(key) or {
+				return error('a vector used as a function needs an integer key, got ${key}')
+			}
+			if i < 0 || i >= n {
+				return error('array index ${i} out of range (length ${n})')
+			}
+			return coll.as_vector().data[i]
+		}
+		else {
+			return error('cannot look ${key} up in ${printer.write(coll)}')
+		}
+	}
+}
+
+fn (mut m Machine) call_closure(c &vlip.Closure, args []vlip.Value) ! {
+	// A trailing rest parameter, written `. name` in the parameter list, collects
+	// the remaining arguments into a list. `c.arity` counts only the FIXED
+	// parameters, so the arity check is "<=" rather than "==".
+	if c.rest {
+		if args.len < c.arity {
+			return error('${c.name}: expected at least ${c.arity} argument${plural(c.arity)}, got ${args.len}')
 		}
 		frame := m.envs.new_env(c.env)
 		mut i := 0
-		for i < fixed.len {
-			m.envs.define(frame, fixed[i], args[i])
+		for i < c.arity {
+			m.envs.define(frame, c.params[i], args[i])
 			i++
 		}
-		m.envs.define(frame, 'rest', vlip.list_from(args[fixed.len..]))
+		m.envs.define(frame, c.params[c.arity], vlip.list_from(args[c.arity..]))
 		m.env = frame
 		m.goto(c.body)
 		return
 	}
 	if args.len != c.arity {
-		panic('${c.name}: expected ${c.arity} arguments, got ${args.len}')
+		return error('${c.name}: expected ${c.arity} argument${plural(c.arity)}, got ${args.len}')
 	}
 	frame := m.envs.new_env(c.env)
 	mut i := 0
@@ -483,6 +562,13 @@ fn (mut m Machine) call_closure(c &vlip.Closure, args []vlip.Value) {
 	// TAIL CALL: no continuation pushed. The body runs with whatever remains,
 	// so recursion in tail position does not grow the stack.
 	m.goto(c.body)
+}
+
+// plural keeps "expected 1 argument" and "expected 2 arguments" honest. The
+// obvious alternative, always writing "arguments", reads as a typo in a message
+// that exists precisely to be read under pressure.
+fn plural(n int) string {
+	return if n == 1 { '' } else { 's' }
 }
 
 // format_args renders a format string plus its arguments. Only ~a (any value) is
@@ -512,13 +598,13 @@ fn format_args(args []vlip.Value) string {
 	return out.bytestr()
 }
 
-fn (mut m Machine) call_primitive(name string, args []vlip.Value) {
+fn (mut m Machine) call_primitive(name string, args []vlip.Value) ! {
 	// Builtins that need to call back into the interpreter are handled here
 	// rather than through the plain-function table.
 	match name {
 		'apply' {
 			if args.len < 2 {
-				panic(m.fatal('apply expects at least 2 arguments'))
+				return error('apply expects at least 2 arguments, got ${args.len}')
 			}
 			// (apply f a b) => (f a b); a trailing list argument is spliced.
 			mut all := []vlip.Value{}
@@ -533,11 +619,14 @@ fn (mut m Machine) call_primitive(name string, args []vlip.Value) {
 				}
 				i++
 			}
-			m.apply_all(all)
+			m.apply_all(all)!
 			return
 		}
 		'error' {
-			panic(m.fatal('error: ${format_args(args)}'))
+			return error('error: ${format_args(args)}')
+		}
+		'raise' {
+			return error('raised: ${format_args(args)}')
 		}
 		'format' {
 			m.val = vlip.string(format_args(args))
@@ -554,14 +643,14 @@ fn (mut m Machine) call_primitive(name string, args []vlip.Value) {
 		else {}
 	}
 	f := m.prims[name] or {
-		panic(m.fatal('unknown primitive: ${name}'))
+		return error('unknown primitive: ${name}')
 	}
 	mut call_args := []vlip.Value{}
 	for a in args {
 		call_args << a
 	}
 	res := f(call_args) or {
-		panic(m.fatal('${name}: ${err.msg()}'))
+		return error('${name}: ${err.msg()}')
 	}
 	m.val = res
 	m.ret()
@@ -582,7 +671,7 @@ fn (mut m Machine) eval_special(name string, id vlip.NodeId, kids []vlip.NodeId)
 		}
 		'if' {
 			if kids.len < 3 {
-				return m.err('if needs a test, a consequent, and optionally an alternative')
+				return error('if needs a test, a consequent, and optionally an alternative')
 			}
 			mut nf := m.kont(.if_k)
 			nf.rest = id
@@ -599,13 +688,15 @@ fn (mut m Machine) eval_special(name string, id vlip.NodeId, kids []vlip.NodeId)
 		'set!' {
 			target := m.arena.node(kids[1])
 			if target.tag != .sym {
-				return m.err('set! needs a name')
+				return error('set! needs a name')
 			}
-	mut nf := m.kont(.set_k)
-	nf.name = target.value
-	m.push(nf)
+mut nf := m.kont(.set_k)
+			nf.name = target.value
+			nf.env = m.env
+			m.push(nf)
 			m.goto(kids[2])
 			return
+
 		}
 		'lambda' {
 			return m.eval_lambda(kids)
@@ -696,71 +787,136 @@ fn (mut m Machine) eval_special(name string, id vlip.NodeId, kids []vlip.NodeId)
 			m.goto(m.transform_loop(kids))
 		}
 		'dotimes' {
-			m.goto(m.transform_dotimes(kids))
+			m.goto(m.transform_dotimes(kids)!)
 		}
 		else {
-			return m.err('unimplemented special form: ${name}')
+			return error('unimplemented special form: ${name}')
 		}
 	}
 }
 
 fn (mut m Machine) eval_define(kids []vlip.NodeId) ! {
+	if kids.len < 2 {
+		return error('define needs a name or a (name . params) list')
+	}
 	target := m.arena.node(kids[1])
 	if target.tag == .sym {
-	mut nf := m.kont(.define_k)
-	nf.name = target.value
-	m.push(nf)
+		if kids.len < 3 {
+			return error('define needs a value for ${target.value}')
+		}
+		mut nf := m.kont(.define_k)
+		nf.name = target.value
+		nf.env = m.env
+		m.push(nf)
 		m.goto(kids[2])
 		return
 	}
 	if target.tag == .list {
 		sig := m.arena.kids(kids[1])
 		if sig.len == 0 || m.arena.node(sig[0]).tag != .sym {
-			return m.err('define needs a name')
+			return error('define needs a name')
 		}
 		fname := m.arena.node(sig[0]).value
-		mut params := []string{}
-		mut i := 1
-		for i < sig.len {
-			part := m.arena.node(sig[i])
-			if part.tag == .sym {
-				params << part.value
-			} else if part.tag == .list {
-				// (struct Point x: px y: py) destructuring parameter
-				return m.err('destructuring parameters are not implemented yet')
-			} else {
-				return m.err('bad parameter in ${fname}')
-			}
-			i++
-		}
+		spec := m.parse_params(sig[1..], fname)!
 		// The body is the forms AFTER the (name . params) signature, so it is
 		// kids[2..] -- not sig[1..], which is the parameter list.
 		body := m.make_begin(kids[2..])
-		m.envs.define(m.env, fname, vlip.new_closure(params, body, m.env, fname))
+		if spec.is_rest {
+			m.envs.define(m.env, fname, vlip.new_rest_closure(spec.names, spec.rest,
+				body, m.env, fname))
+		} else {
+			m.envs.define(m.env, fname, vlip.new_closure(spec.names, body, m.env, fname))
+		}
 		m.val = vlip.symbol(fname)
 		m.ret()
 		return
 	}
-	return m.err('define needs a name or a (name . params) list')
+	return error('define needs a name or a (name . params) list')
 }
 
-fn (mut m Machine) eval_lambda(kids []vlip.NodeId) ! {
-	mut params := []string{}
-	plist := m.arena.kids(kids[1])
+// ParamSpec is a parsed parameter list: the fixed names in order, plus at most
+// one rest name introduced by a trailing dot.
+pub struct ParamSpec {
+pub mut:
+	names  []string
+	rest   string
+	is_rest bool
+}
+
+// parse_params accepts `(a b)`, `(a . b)` and the Racket-style `(fn [a b] ...)`
+// spelling, which `fn` normalises before calling here.
+//
+// The dot form is a genuine dotted pair, not a two-element sequence: `.` alone
+// is not a parameter. An earlier version appended `"."` and the rest name as two
+// ordinary parameters, so `(define (f a . r) r)` had arity 3 and `(f 1 2 3)`
+// bound `r` to `3`. That is the "rest parameters return 3" bug, and it was a
+// parsing failure rather than a binding failure.
+pub fn (mut m Machine) parse_params(plist []vlip.NodeId, who string) !ParamSpec {
+	mut spec := ParamSpec{
+		names: []string{}
+	}
 	mut i := 0
 	for i < plist.len {
 		part := m.arena.node(plist[i])
-		if part.tag == .sym {
-			params << part.value
-		} else {
-			return m.err('lambda parameters must be symbols')
+		if part.tag == .list {
+			// (struct Point x: px y: py) destructuring parameter
+			return error('${who}: destructuring parameters are not implemented yet')
 		}
+		if part.tag != .sym {
+			return error('${who}: parameter ${i} is not a name')
+		}
+		if part.value == '.' {
+			if i + 2 != plist.len {
+				return error('${who}: the dot must introduce the last parameter')
+			}
+			nm := m.arena.node(plist[i + 1])
+			if nm.tag != .sym {
+				return error('${who}: the dot needs a name after it')
+			}
+			spec.rest = nm.value
+			spec.is_rest = true
+			i += 2
+			continue
+		}
+		mut dup := false
+		mut seen := []string{}
+		seen << spec.names
+		for n in seen {
+			if n == part.value {
+				dup = true
+			}
+		}
+		if dup {
+			return error('${who}: parameter ${part.value} is named twice')
+		}
+		spec.names << part.value
 		i++
 	}
+	if spec.is_rest {
+		for n in spec.names {
+			if n == spec.rest {
+				return error('${who}: ${spec.rest} is both a fixed and a rest parameter')
+			}
+		}
+	}
+	return spec
+}
+
+fn (mut m Machine) eval_lambda(kids []vlip.NodeId) ! {
+	if kids.len < 2 {
+		return error('lambda needs a parameter list')
+	}
+	plist := m.arena.kids(kids[1])
+	spec := m.parse_params(plist, 'lambda')!
 	body := m.make_begin(kids[2..])
-	m.val = vlip.new_closure(params, body, m.env, 'lambda')
+	if spec.is_rest {
+		m.val = vlip.new_rest_closure(spec.names, spec.rest, body, m.env, 'lambda')
+	} else {
+		m.val = vlip.new_closure(spec.names, body, m.env, 'lambda')
+	}
 	m.ret()
 }
+
 // ------------------------------------------------------------- arena helpers
 
 // fresh builds a name no source program can contain, for the helper function
@@ -955,8 +1111,16 @@ pub fn (mut m Machine) transform_let(kids []vlip.NodeId) vlip.NodeId {
 }
 
 // let* => nested single-binding lets, so each value sees the previous name.
+//
+// The obvious version passes 1 as the starting index, treating `binds_at` as a
+// count of forms already consumed. It is not: `binds_at` indexes
+// `kids[1]`'s children, the binding group, so it must start at 0. Starting at 1
+// silently DROPPED the first binding -- `(let* ([a 1] [b (+ a 1)]) b)` compiled to
+// `(let ([b (+ a 1)]) b)`, whose `a` is then genuinely unbound in the enclosing
+// scope. That is why the failure read as "unbound identifier: a" and was
+// misdiagnosed for a while as the `[...]`-in-two-positions problem.
 pub fn (mut m Machine) transform_let_star(kids []vlip.NodeId) vlip.NodeId {
-	return m.transform_let_star_at(kids, 1)
+	return m.transform_let_star_at(kids, 0)
 }
 
 fn (mut m Machine) transform_let_star_at(kids []vlip.NodeId, binds_at int) vlip.NodeId {
@@ -1164,18 +1328,23 @@ pub fn (mut m Machine) transform_loop(kids []vlip.NodeId) vlip.NodeId {
 }
 
 // dotimes => (loop i 0 (< i n) body...)
-pub fn (mut m Machine) transform_dotimes(kids []vlip.NodeId) vlip.NodeId {
+pub fn (mut m Machine) transform_dotimes(kids []vlip.NodeId) !vlip.NodeId {
+	if kids.len < 3 {
+		return error('dotimes needs a loop variable and a count')
+	}
 	loopvar := m.arena.node(kids[1])
 	if loopvar.tag != .sym {
-
+		return error('dotimes needs a symbol as its loop variable, got ${printer.write_datum(m.arena, kids[1])}')
 	}
 	lt := m.call_node(m.sym_node('<'), [kids[1], kids[2]])
 	mut items := []vlip.NodeId{}
 	items << kids[1]
 	items << m.int_node(0)
 	items << lt
-	for b in kids[3..] {
-		items << b
+	mut i := 3
+	for i < kids.len {
+		items << kids[i]
+		i++
 	}
 	return m.node_of('loop', items)
 }

@@ -32,14 +32,20 @@ arithmetic, branching, `loop`, `dotimes`, `letrec`, `cond` and `case`.
 | `docs/010-roadmap.md` | embedding, the REPL, the example programs to write, and the veb final phase |
 | `vlib/vlip/` | the implementation: value representation, reader, printer, machine, primitives |
 | `examples/` | the six programs that define the syntax; all parse |
-| `tests/tail_calls.v` | tail-call and derived-form suite (17 passing) |
+| `tests/tail_calls.v` | tail-call and derived-form suite (21 passing) |
 | `tests/non_tail.v` | non-tail sibling calls, the case the environment bug hid in |
 | `tests/loop_forms.v` | `loop`, `dotimes` and `letrec` |
+| `tests/binding_forms.v` | `let`, `let*`, `letrec`, rest parameters, shadowing, no leaking |
 
-Not working yet, and named in `docs/010-roadmap.md`: `let*`, rest parameters,
-and callable keywords. `let*` fails because `[...]` is a vector literal in value
-position and a binding group in form position, and the reader does not yet mark
-which reading applies.
+`let*`, rest parameters and callable keywords now work, and `tests/binding_forms.v`
+covers them. The three were long misdiagnosed as one problem — "`[...]` is a vector
+literal in a value position and a binding group in a form position" — and were
+actually two unrelated parser bugs: `let*` started its recursion at binding 1 and
+so silently dropped the first binding, and `.` was parsed as an ordinary parameter
+named `.`. `[...]` is resolved by position, not by a reader flag: in the second
+slot of `let`/`let*`/`letrec` it is a binding group, and everywhere else it is a
+vector literal. Both `[a 1]` and `(a 1)` are accepted as a binding, because the
+examples and the documentation disagree about which to write and the examples win.
 
 ### Verified
 

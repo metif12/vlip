@@ -325,10 +325,28 @@ comment accurate.
 
 ### 7.5 Keeping the known-broken list honest — every milestone
 
-Three things are listed as failing in the README, the test suite and this
-document: `let*`, rest parameters, callable keywords. A list of known failures
-is only useful while it is true, and the failure mode is silent: nobody reads a
-stale "known broken" note and concludes the bug is fixed.
+Three things were listed as failing in the README, the test suite and this
+document: `let*`, rest parameters, callable keywords. All three are fixed and the
+notes are gone; a list of known failures is only useful while it is true, and the
+failure mode is silent — nobody reads a stale "known broken" note and concludes
+the bug is fixed.
+
+What replaced the notes is `tests/binding_forms.v`, which asserts the behaviour
+rather than describing the failure. The root cause was also not what the notes
+claimed. It went on for a while as a design question — `[...]` being a vector
+literal in a value position and a binding group in a form position — when it was
+two ordinary parser bugs:
+
+- `transform_let_star` started its recursion at binding index 1 instead of 0, so
+  it silently dropped the first binding. `(let* ([a 1] [b (+ a 1)]) b)` compiled to
+  `(let ([b (+ a 1)]) b)`, and the resulting "unbound identifier: a" looks exactly
+  like a scoping bug.
+- `.` in a parameter list was appended as an ordinary parameter named `.`, so
+  `(define (f a . r) r)` had arity 3 and `(f 1 2 3)` bound `r` to `3`.
+
+The lesson generalises: a bug report that explains *why* a symptom appears is
+usually a hypothesis, not a finding. Reproduce the symptom, then read the code
+path.
 
 So, per milestone:
 

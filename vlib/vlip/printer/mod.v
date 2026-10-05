@@ -30,6 +30,7 @@ fn write_value(v vlip.Value, active []u64, seen map[u64]int, depth int) string {
 	
 	match v.tag {
 		.nil { return 'nil' }
+		.emptylist { return '()' }
 		.boolean { return if v.as_bool() { '#t' } else { '#f' } }
 		.integer { return strconv.format_int(v.as_int(), 10) }
 		.rune { return char_literal(i32(v.i)) }

@@ -86,20 +86,14 @@ fn main() {
 	check('and-short', '(and 1 #f 3)', '#f')
 	check('and-value', '(and 1 2 3)', '3')
 	check('or-value', "(or #f #f 7)", '7')
-	// --- known failures, tracked in docs/010-roadmap.md ------------------
-	//
-	// let* / rest-param / table-callable are not implemented correctly yet and
-	// are left visible here rather than deleted, so nobody later mistakes their
-	// absence for a passing test.
-	//
-	// let*: (let ([a 1] [b (+ a 1)]) b) fails with unbound identifier: a. The
-	// bracket group [a 1] [b 2] reaches the machine as a single container holding
-	// one vector, so the binding pairs never get to transform_let. This is the
-	// one-syntax-two-meanings problem: [...] is a vector literal in value position
-	// and a grouping in form position, and the reader does not yet mark which.
-	//
-	// rest-param: (define (f a . r) r) does not collect a rest list.
-	// table-callable: (:a {:a 1}) applies nil and panics.
+	// The three known failures this file used to name -- `let*`, rest
+	// parameters, and callable keywords -- are fixed, and tests/binding_forms.v
+	// covers them properly. A note describing a fixed bug is worse than no note,
+	// so they are simply gone. The keyword call is kept here because it is one
+	// line and it sits next to the other application tests.
+	check('keyword-call', '(:a {:a 1})', '1')
+	check('letstar', '(let* ([a 1] [b (+ a 1)]) b)', '2')
+	check('rest-param', '(define (f a . r) r) (f 1 2 3)', '(2 3)')
 	check('letrec', '(letrec ([e (lambda (n) (if (= n 0) #t (o (- n 1))))] [o (lambda (n) (if (= n 0) #f (e (- n 1))))]) (e 10))', '#t')
 
 	// 2000, not 20000. The recursive call sits inside `or`, so one pending
