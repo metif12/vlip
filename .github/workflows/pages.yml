@@ -55,13 +55,20 @@ jobs:
           v -cc gcc -o sitegen tools/sitegen.v
           ./sitegen | tee sitegen.log
 
+      # The generator puts English at the site root and every other language
+      # under its own code, so English gets no prefix at all -- not even for its
+      # sub-pages. Getting this wrong is exactly what the check below caught the
+      # first time it ran.
       - name: Check the output is complete
         run: |
-          test -f site_out/index.html
+          test -s site_out/index.html
+          for p in features docs guides; do
+            test -s "site_out/$p/index.html" || { echo "::error::missing site_out/$p/index.html"; exit 1; }
+          done
           for d in en fa ar es fr de pt ru uk pl nl tr hi zh ja ko; do
+            [ "$d" = "en" ] && continue
             for p in "" features docs guides; do
               f="site_out/$d/$p/index.html"
-              if [ "$d" = "en" ] && [ -z "$p" ]; then f="site_out/index.html"; fi
               test -s "$f" || { echo "::error::missing or empty $f"; exit 1; }
             done
           done
