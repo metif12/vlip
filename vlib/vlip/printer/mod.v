@@ -238,8 +238,15 @@ pub fn write_datum(a &reader.Arena, id reader.NodeId) string {
 fn wrap(open string, a &reader.Arena, id reader.NodeId) string {
 	kids := a.kids(id)
 	mut parts := []string{}
-	for kid in kids {
-		parts << write_datum(a, kid)
+	// An index loop, not `for kid in kids`: V 0.5.2 emits an unresolved
+	// `reader.NodeId` into the generated C for a range loop over a slice whose
+	// element type is a type alias declared in another module. gcc then rejects
+	// the file. It reproduces on the Linux V3 compiler and not on the Windows
+	// one, which is the worst kind of difference.
+	mut ki := 0
+	for ki < kids.len {
+		parts << write_datum(a, kids[ki])
+		ki++
 	}
 	mut out := open
 	mut i := 0
