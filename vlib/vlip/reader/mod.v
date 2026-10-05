@@ -165,13 +165,26 @@ pub fn (mut a Arena) finish(id NodeId, items []NodeId) {
 	node.count = i32(items.len)
 }
 
-// add_child appends a single child immediately. Only safe when the parent has no
-// nested children yet; finish() is the general case.
+// add_child appends a single child immediately.
+//
+// It is only correct when the parent is the LAST thing that has appended to
+// `children` -- that is, when the parent was created after everything already
+// read. It cannot be used for a node that was created before other children were
+// appended, because it leaves `start` at 0 and so writes into whatever form
+// happened to occupy children[0].
+//
+// It was used for `'` and `` ` ``, whose wrapper node is created immediately
+// before its operand. Every `'(...)` in a file whose first form was a list put
+// its operand at children[0], i.e. as the first child of the FIRST top-level
+// form. `'after` after a `define` therefore evaluated the symbol `define` and
+// printed it -- silently, because the value it produced was a perfectly valid
+// symbol. `finish` has no such precondition; use it.
 pub fn (mut a Arena) add_child(parent NodeId, child NodeId) {
+	start := i32(a.children.len)
 	a.children << child
 	mut node := &a.nodes[int(parent)]
-	node.count++
-	node.start = int(node.start)
+	node.count = 1
+	node.start = start
 }
 
 pub fn (a &Arena) node(id NodeId) &Datum {
@@ -208,6 +221,11 @@ pub:
 	msg  string
 	line int
 	col  int
+	// incomplete marks "this form is not finished yet", which is a different
+	// thing from "this form is wrong". A file reader turns it into a syntax error,
+	// because a file that ends mid-bracket IS broken. A REPL has to keep reading
+	// instead, and cannot tell the two cases from the message text.
+	incomplete bool
 }
 
 pub fn (d &Diagnostic) render(path string) string {
@@ -230,6 +248,17 @@ fn (mut r Reader) fail(msg string) {
 		msg:  msg
 		line: r.line
 		col:  r.off - r.line_at + 1
+	}
+}
+
+// short is the same, but says the form is unfinished rather than wrong. The only
+// difference is the flag, which is the whole point: a REPL keeps reading on it.
+fn (mut r Reader) short(msg string) {
+	r.diags << Diagnostic{
+		msg:        msg
+		line:       r.line
+		col:        r.off - r.line_at + 1
+		incomplete: true
 	}
 }
 
@@ -383,7 +412,7 @@ fn (mut r Reader) read_collection(tag DatumTag, close u8) ?NodeId {
 	for {
 		r.skip_ws()
 		if r.eof() {
-			r.fail('unclosed ' + tag.str() + ', expected byte 0x' + close.hex())
+			r.short('unclosed ' + tag.str() + ', expected byte 0x' + close.hex())
 			break
 		}
 		if r.peek() == close {
@@ -410,7 +439,7 @@ fn (mut r Reader) read_string() ?NodeId {
 	mut buf := []u8{cap: 32}
 	for {
 		if r.eof() {
-			r.fail('unterminated string')
+			r.short('unterminated string')
 			break
 		}
 		c := r.next()
@@ -449,7 +478,7 @@ fn (mut r Reader) read_bar_symbol() ?NodeId {
 		buf << r.next()
 	}
 	if r.eof() {
-		r.fail('unterminated |symbol|')
+		r.short('unterminated |symbol|')
 	} else {
 		r.next() // closing |
 	}
@@ -646,6 +675,96 @@ fn (mut r Reader) try_number(s string) ?NodeId {
 		}
 	}
 	return none
+}
+
+// Depth is how far into a form the REPL is, and whether a string is open.
+//
+// A second, independent scan rather than a mode on Reader, because the REPL needs
+// this before it decides to read: the buffer is re-parsed on every keystroke-line,
+// and the answer it wants -- "is anything still open?" -- has to be computable
+// without reading anything.
+//
+// `;` comments and `#| ... |#` blocks are skipped, and a `|`-delimited symbol is
+// NOT a string: `(a |x| b)` is balanced, while `(a "x` is not. Getting that
+// backwards makes the prompt lie about the one case a prompt exists for.
+pub struct Depth {
+pub mut:
+	n        int
+	in_string bool
+	in_comment bool
+}
+
+// depth scans `src` and reports how many brackets are still open.
+//
+// The obvious version counts `(`, `[` and `{` and forgets about strings, so
+// `(print "(")` looks unterminated forever and the REPL waits for a bracket the
+// user has no intention of typing. Byte iteration, not rune iteration: V iterates
+// a string as bytes, and a rune loop mangles every multi-byte character -- which
+// here would mean the offset arithmetic is wrong for any input containing one.
+pub fn depth(src string) Depth {
+	mut d := Depth{
+		n: 0
+	}
+	mut i := 0
+	for i < src.len {
+		c := src[i]
+		// A `#|` block comment, nested like the lexer reads it. Non-nested
+		// handling would still be right for all but commented-out blocks that
+		// contain their own terminator, which is vanishingly rare in a REPL
+		// buffer.
+		if c == hash_c && i + 1 < src.len && src[i + 1] == bar {
+			mut level := 1
+			i += 2
+			for i + 1 < src.len && level > 0 {
+				if src[i] == hash_c && src[i + 1] == bar {
+					level++
+					i += 2
+				} else if src[i] == bar && src[i + 1] == hash_c {
+					level--
+					i += 2
+				} else {
+					i++
+				}
+			}
+			continue
+		}
+		if c == semi {
+			for i < src.len && src[i] != nl {
+				i++
+			}
+			continue
+		}
+		if c == dquote {
+			i++
+			mut closed := false
+			for i < src.len {
+				if src[i] == backslash_bs {
+					i += 2
+					continue
+				}
+				if src[i] == dquote {
+					closed = true
+					i++
+					break
+				}
+				i++
+			}
+			if !closed {
+				d.in_string = true
+			}
+			continue
+		}
+		if c == lparen || c == lbrack || c == lbrace {
+			d.n++
+		} else if c == rparen || c == rbrack || c == rbrace {
+			if d.n > 0 {
+				d.n--
+			}
+		}
+		i++
+	}
+	d.in_comment = d.n > 0 || d.in_string
+	return d
 }
 
 // ------------------------------------------------------------------ entry
