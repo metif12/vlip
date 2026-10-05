@@ -24,7 +24,11 @@
 (vector-ref [10 20 30] 1)   ;=> 20
 (vector-length [1 2 3])     ;=> 3
 (vector-append [1] [2])     ;=> [1 2]
-(-> [1 2 3] vector-map (fn [x] (* x 10)) vector-rev)  ;=> [30 20 10]
+;; `->` puts the value FIRST and `->>` puts it LAST. This line used to thread the
+;; vector through a BARE `vector-map`, which has nowhere to put a first argument;
+;; it needed `->>` and a written call. The two forms are not interchangeable, and
+;; writing the bare symbol was the mistake.
+(->> [1 2 3] (vector-map (fn [x] (* x 10))) vector-rev)  ;=> [30 20 10]
 
 ;; --- tables: immutable hash maps, keyed by keyword ---
 {:name "ada" :born 1815}

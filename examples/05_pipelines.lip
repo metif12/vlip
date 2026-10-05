@@ -51,12 +51,12 @@
 
 (struct Point (x y))
 (Point 1 2)                  ;=> (Point 1 2)
+(define p (Point 1 2))       ; bound BEFORE it is read: the next three lines used
 (p.x)                        ; field read: 1
 (point? (Point 1 2))         ;=> #t
-(point-x (Point 1 2))        ; accessor: 1
+(point-x (Point 1 2))        ;=> accessor: 1
 
 ;; immutable structs: updating returns a new value, leaving the original alone
-(define p (Point 1 2))
 (define q p.y := 99)         ; q is (Point 1 99), p is still (Point 1 2)
 
 ;; #:mutable for the rare in-place case
