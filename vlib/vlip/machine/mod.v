@@ -27,6 +27,7 @@ module machine
 
 import strconv
 import vlib.vlip
+import vlib.vlip.host
 import vlib.vlip.prims
 import vlib.vlip.printer
 import vlib.vlip.reader
@@ -42,7 +43,7 @@ pub mut:
 	arena     &reader.Arena
 	kstack    []vlip.Kont
 	globals   vlip.EnvId
-	envs       vlip.EnvArena
+	envs      vlip.EnvArena
 	prims     map[string]vlip.PrimFn
 	ctl       Ctl = .eval_form
 	form      vlip.NodeId
@@ -53,11 +54,24 @@ pub mut:
 	max_kont  int = 4_000_000
 	out       []string
 	gensym    int
+	host      host.Host
+	// source_name labels where the code being evaluated came from. It appears in
+	// every error message, and a REPL that reports "unbound identifier: x" with
+	// no indication of which of forty definitions introduced x is unusable.
+	source string
 }
 
+// new_machine builds a machine over an arena the caller already owns. The suites
+// use it because they read their own source.
 pub fn new_machine(a &reader.Arena) &Machine {
-	// The reference fields (arena, globals, env) must be initialised inside an
-	// unsafe block.
+	return new_machine_with(a, &host.ConsoleHost{})
+}
+
+// new_machine_with is new_machine plus a host. Everything else about the machine
+// is the same; only where print goes and where `load` reads from differ.
+pub fn new_machine_with(a &reader.Arena, h host.Host) &Machine {
+	// The reference fields (arena, globals, env, host) must be initialised inside
+	// an unsafe block.
 	mut m := unsafe {
 		&Machine{
 			arena:   a
@@ -66,6 +80,7 @@ pub fn new_machine(a &reader.Arena) &Machine {
 			globals: vlip.no_env
 			env:     vlip.no_env
 			prims:   prims.table()
+			host:    h
 		}
 	}
 	// The global environment must be a real frame, not `no_env`: `no_env` is the
@@ -76,27 +91,128 @@ pub fn new_machine(a &reader.Arena) &Machine {
 	return m
 }
 
+// new_standalone builds a machine that owns its arena, so an embedder does not
+// have to keep one alive or know that it has to.
+//
+// The arena is a heap reference rather than a field the caller passes in, because
+// a second source read APPENDS to it: every NodeId already stored in a closure or
+// a continuation frame has to stay valid, so there can only ever be one.
+pub fn new_standalone(h host.Host) &Machine {
+	a := &reader.Arena{
+		nodes:    []reader.Datum{}
+		children: []reader.NodeId{}
+	}
+	return new_machine_with(a, h)
+}
+
+
 // ---------------------------------------------------------------- the loop
+
+// reset returns the control state to "nothing in flight".
+//
+// Without it, an ABORTED program leaves its continuation frames on the stack, and
+// the next evaluation returns into them instead of finishing. The symptom is not
+// an error: it is a wrong value, produced by a stale frame from a program that
+// already failed. tests/embedding.v provokes it on purpose.
+//
+// `quasi_to_value` saves and restores the same fields by hand, because it calls
+// eval_one from the MIDDLE of an evaluation and must not clear what it is in.
+fn (mut m Machine) reset() {
+	m.kstack = []vlip.Kont{}
+	m.ctl = .eval_form
+	m.env = m.globals
+	m.form = vlip.no_node
+	m.val = vlip.nil_value()
+}
 
 // run evaluates top-level forms in order and returns the last value.
 pub fn (mut m Machine) run(forms []vlip.NodeId) !vlip.Value {
 	mut last := vlip.nil_value()
-	for f in forms {
-		m.form = f
-		m.env = m.globals
+	// An index loop, not `for f in forms`: the element type is a type alias from
+	// another module, and V 0.5.2 emits the unresolved name into the generated C
+	// for a range loop over such a slice. See docs/010-roadmap.md 7.3.
+	mut i := 0
+	for i < forms.len {
+		m.reset()
+		m.form = forms[i]
 		m.ctl = .eval_form
 		last = m.drive()!
+		i++
 	}
 	return last
 }
 
-// eval_one evaluates a single form, for the REPL.
+// run_str parses and evaluates `src` in THIS machine and returns the last value.
+//
+// One call, so an embedder never holds an Arena or a form list. The nodes are
+// appended to the machine's own arena rather than read into a fresh one: a
+// closure defined by the first run_str holds a NodeId, and a second arena would
+// renumber it.
+pub fn (mut m Machine) run_str(src string) !vlip.Value {
+	res := m.arena.read_forms(src)
+	return m.run_checked(res)
+}
+
+// run_forms evaluates forms already read into this machine's arena. It reports
+// read diagnostics as an error rather than printing them, because a caller that
+// embeds a machine has no one to print to.
+pub fn (mut m Machine) run_checked(res reader.Forms) !vlip.Value {
+	if res.diags.len > 0 {
+		d := res.diags[0]
+		return error('${m.where()}:${d.line}:${d.col}: ${d.msg}${
+			if res.diags.len > 1 { ' (and ${res.diags.len - 1} more)' } else { '' }}')
+	}
+	return m.run(res.forms)
+}
+
+// load reads `path` through the host and evaluates it in this machine, so
+// definitions made in the file are visible to the caller afterwards.
+//
+// It deliberately does not create a machine of its own. A `load` that started a
+// fresh machine would run the file perfectly and then throw away every definition
+// in it, which is the specific failure the roadmap calls out.
+pub fn (mut m Machine) load(path string) !vlip.Value {
+	src := m.host.host_load(path)!
+	prev := m.source
+	m.source = path
+	res := m.arena.read_forms(src)
+	out := m.run_checked(res)!
+	m.source = prev
+	return out
+}
+
+// where labels the current source for an error message.
+pub fn (m &Machine) where() string {
+	if m.source == '' {
+		return 'vlip'
+	}
+	return m.source
+}
+
+// eval_one evaluates a single form, for the REPL. It resets the control state
+// first, so a form that failed to evaluate leaves nothing behind.
 pub fn (mut m Machine) eval_one(f vlip.NodeId) !vlip.Value {
+	m.reset()
 	m.form = f
-	m.env = m.globals
 	m.ctl = .eval_form
 	return m.drive()
 }
+
+// eval_string parses and evaluates `src` as a sequence of top-level forms,
+// evaluating each in turn and returning the last value. Unlike run_str it does
+// not stop at the first failure: the REPL needs to keep going, and so does a
+// file that prints a warning and carries on.
+pub fn (mut m Machine) eval_string_lenient(src string) !vlip.Value {
+	res := m.arena.read_forms(src)
+	mut last := vlip.nil_value()
+	mut i := 0
+	for i < res.forms.len {
+		last = m.eval_one(res.forms[i])!
+		i++
+	}
+	return last
+}
+
 
 fn (mut m Machine) drive() !vlip.Value {
 	for {
@@ -263,17 +379,28 @@ fn (mut m Machine) eval_symbol(name string) ! {
 	return error('unbound identifier: ${name}')
 }
 
-// builtins are the names call_primitive handles itself rather than through the
-// prims table, because each one needs the machine -- `apply` re-enters it, `error`
-// and `raise` abort, `format` and `gensym` read machine state.
+// machine_builtin is the list of names call_primitive handles itself rather than
+// through the prims table, because each one needs the machine: `apply` re-enters
+// it, `error` and `raise` abort, `format` and `gensym` read machine state, and
+// `print`/`display` write to the host.
 //
-// They have to be listed here as well as in call_primitive. They were not, and
-// `(error "boom")` therefore failed as "unbound identifier: error" before it ever
-// reached the application: the name did not resolve, so the abort path was dead
-// code for exactly the input it exists to handle.
+// They have to be listed in eval_symbol as well as handled here. They were not,
+// and `(error "boom")` therefore failed as "unbound identifier: error" before it
+// ever reached the application: the name did not resolve, so the abort path was
+// dead code for exactly the input it exists to handle.
 fn machine_builtin(name string) bool {
-	return name in ['apply', 'error', 'raise', 'format', 'gensym']
+	return name in ['apply', 'error', 'raise', 'format', 'gensym', 'print', 'display']
 }
+
+// show_value renders one argument. `quoted` distinguishes `print` from `display`:
+// `print` shows strings with their quotes and `display` does not.
+fn show_value(a vlip.Value, quoted bool) !string {
+	if a.tag == .string && !quoted {
+		return a.as_string()
+	}
+	return printer.write(a)
+}
+
 
 fn (mut m Machine) eval_list(id vlip.NodeId, kids []vlip.NodeId) ! {
 	head := m.arena.node(kids[0])
@@ -630,6 +757,30 @@ fn (mut m Machine) call_primitive(name string, args []vlip.Value) ! {
 		}
 		'format' {
 			m.val = vlip.string(format_args(args))
+			m.ret()
+			return
+		}
+		'print', 'display' {
+			// These two are machine builtins rather than table entries because
+			// they have to reach `host` and `out`, which the prims table cannot
+			// see: PrimFn deliberately takes only its arguments, so that prims
+			// and the machine do not become mutually dependent.
+			//
+			// The line goes to the host AND to `out`. `out` is what a host
+			// inspects afterwards; the host call is what makes a terminal show
+			// anything at all.
+			mut text := ''
+			mut i := 0
+			for i < args.len {
+				if i > 0 {
+					text += ' '
+				}
+				text += show_value(args[i], name == 'print')!
+				i++
+			}
+			m.out << text
+			m.host.host_print(text)
+			m.val = vlip.nil_value()
 			m.ret()
 			return
 		}
@@ -1075,11 +1226,26 @@ fn (mut m Machine) assemble(id vlip.NodeId, kids []vlip.NodeId, built map[vlip.N
 
 // quasi_to_value builds a form ready to be handed to a macro: an unquote is
 // evaluated now, everything else becomes a literal.
+//
+// The save/restore is not optional. This runs in the MIDDLE of an evaluation --
+// step_eval dispatches here for a quasiquoted form -- and eval_one resets the
+// control state. Without the restore, evaluating an unquote would throw away the
+// continuation frames of the form that contained it, and the macro expansion would
+// return into the wrong place.
 pub fn (mut m Machine) quasi_to_value(id vlip.NodeId) vlip.Value {
 	d := m.arena.node(id)
 	if d.tag == .unquote || d.tag == .unquote_splice {
 		inner := m.arena.kids(id)[0]
-		return m.eval_one(inner) or { vlip.nil_value() }
+		saved_k := m.kstack
+		saved_ctl := m.ctl
+		saved_form := m.form
+		saved_env := m.env
+		out := m.eval_one(inner) or { vlip.nil_value() }
+		m.kstack = saved_k
+		m.ctl = saved_ctl
+		m.form = saved_form
+		m.env = saved_env
+		return out
 	}
 	return m.datum_to_value(id)
 }

@@ -78,8 +78,6 @@ pub fn table() map[string]vlip.PrimFn {
 	p['min'] = prim_min
 	p['max'] = prim_max
 	p['abs'] = prim_abs
-	p['print'] = prim_print
-	p['display'] = prim_display
 	p['str'] = prim_str
 	p['list-ref'] = prim_list_ref
 	p['take'] = prim_take
@@ -759,40 +757,17 @@ fn prim_number_to_string(args []vlip.Value) !vlip.Value {
 }
 
 // ----------------------------------------------------------------- output
+//
+// `print` and `display` are NOT here. They used to be, and they wrote to stdout
+// with println(), which is the one thing that makes an interpreter impossible to
+// embed: a host cannot capture it, and the tests could not assert on it. They
+// are machine builtins now, because only the machine can see the Host.
 
 fn show(a vlip.Value, quote_strings bool) string {
 	if a.tag == .string && !quote_strings {
 		return a.as_string()
 	}
 	return printer.write(a)
-}
-
-fn prim_print(args []vlip.Value) !vlip.Value {
-	mut buf := []u8{}
-	mut i := 0
-	for i < args.len {
-		if i > 0 {
-			buf << ` `.bytes()
-		}
-		buf << show(args[i], true).bytes()
-		i++
-	}
-	println(buf.bytestr())
-	return vlip.nil_value()
-}
-
-fn prim_display(args []vlip.Value) !vlip.Value {
-	mut buf := []u8{}
-	mut i := 0
-	for i < args.len {
-		if i > 0 {
-			buf << ` `.bytes()
-		}
-		buf << show(args[i], false).bytes()
-		i++
-	}
-	println(buf.bytestr())
-	return vlip.nil_value()
 }
 
 fn prim_str(args []vlip.Value) !vlip.Value {
