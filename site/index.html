@@ -117,7 +117,7 @@
   <table>
     <thead><tr><th>Test</th><th>Iterations</th><th>Result</th><th>Stack</th></tr></thead>
     <tbody>
-      <tr><td>self tail call</td><td class="num">1,000,000</td><td class="num">1000000</td><td class="num">0</td></tr>
+      <tr><td>self tail call</td><td class="num">250,000</td><td class="num">250000</td><td class="num">0</td></tr>
       <tr><td>mutual tail call</td><td class="num">20,000</td><td class="num">pong</td><td class="num">0</td></tr>
       <tr><td>tail call in <code>cond</code></td><td class="num">100,000</td><td class="num">100000</td><td class="num">0</td></tr>
       <tr><td>tail call in <code>let</code></td><td class="num">50,000</td><td class="num">50000</td><td class="num">0</td></tr>
@@ -126,7 +126,7 @@
   </table>
 
   <p>A stack depth of <code>0</code> at the end is the point. If the loop were
-  recursive rather than iterative, that column would be <code>1,000,000</code>.</p>
+  recursive rather than iterative, that column would be <code>250,000</code>.</p>
 
   <h2>Embedding</h2>
   <p>The machine is a library, not a program. It holds no global state, it takes

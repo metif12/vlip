@@ -44,14 +44,14 @@ which reading applies.
 ### Verified
 
 ```text
-ok   self tail call 1e6 => 1000000  (steps=28000020, kont=0)
+ok   self tail call 250k => 250000   (steps=7000020, kont=0)
 ok   mutual tail call 2e4 => pong   (steps=400020,  kont=0)
 ok   tail in cond 1e5 => 100000     (steps=2900021,  kont=0)
 ok   non-tail fib => 6765           (steps=503488,   kont=0)
 ok   loop => 7                      (steps=185,      kont=0)
 ```
 
-A stack depth of `0` at the end of a million tail calls is the whole point: the
+A stack depth of `0` at the end of a quarter-million tail calls is the whole point: the
 frame in tail position is reused rather than pushed.
 
 ## Build and test

@@ -36,8 +36,8 @@ fn check(label string, src string, expected string) {
 }
 
 fn main() {
-	// 1. self tail call, 1,000,000 deep
-	check('self tail call 1e6', '
+	// 1. self tail call, 250,000 deep -- see the note below on the depth
+	check('self tail call 250k', '
 		(define (cd n acc)
 		  (if (= n 0) acc (cd (- n 1) (+ acc 1))))
 		(cd 250000 0)', '250000')
