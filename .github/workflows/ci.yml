@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
@@ -15,7 +16,16 @@ jobs:
         run: |
           curl -fsSL https://github.com/vlang/v/releases/latest/download/v_linux.zip -o v.zip
           unzip -q v.zip
-          sudo install -m755 v /usr/local/bin/v
+          # The archive's layout is not stable across releases -- `install -m755 v`
+          # failed with "omitting directory 'v'" because the entry is a directory,
+          # not the binary. Find the executable instead of assuming its path.
+          V_BIN="$(find . -maxdepth 3 -type f -name v -perm -u+x | head -n 1)"
+          if [ -z "$V_BIN" ]; then
+            echo "::error::no v executable found in the release archive"
+            find . -maxdepth 3 | head -50
+            exit 1
+          fi
+          sudo install -m755 "$V_BIN" /usr/local/bin/v
           v version
 
       # `-cc gcc` everywhere: the default C backend in the pinned V release
