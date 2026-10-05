@@ -38,6 +38,12 @@ enum Ctl {
 	return_value
 }
 
+// Machine is @[heap] so that a `&Machine` is known to point at the heap. Without
+// it V refuses every mutation through a machine reference held in another struct
+// -- "cannot be assigned outside unsafe blocks as it might refer to an object
+// stored on stack" -- which is most of what a REPL or a host does, since both hold
+// the machine rather than own it inline.
+@[heap]
 pub struct Machine {
 pub mut:
 	arena     &reader.Arena
@@ -394,7 +400,7 @@ fn machine_builtin(name string) bool {
 
 // show_value renders one argument. `quoted` distinguishes `print` from `display`:
 // `print` shows strings with their quotes and `display` does not.
-fn show_value(a vlip.Value, quoted bool) !string {
+fn show_value(a vlip.Value, quoted bool) string {
 	if a.tag == .string && !quoted {
 		return a.as_string()
 	}
@@ -698,9 +704,17 @@ fn plural(n int) string {
 	return if n == 1 { '' } else { 's' }
 }
 
-// format_args renders a format string plus its arguments. Only ~a (any value) is
-// supported, because that is all the examples use; adding ~s or ~d later is a
-// change in one place.
+// format_args renders a format string plus its arguments.
+//
+// Two directives, and the distinction between them is not decoration:
+//
+//	~a  the value as text, with a string shown raw        (like Clojure's ~a)
+//	~s  the value as the reader would write it            (like Clojure's ~s)
+//
+// ~a rendering strings WITH quotes was wrong, and it made every greeting-style
+// message in the examples come out as `Hello, "world".` -- because ~a is the
+// directive for "any value", and quoting is what `print` does, not what a
+// formatter does.
 fn format_args(args []vlip.Value) string {
 	if args.len == 0 {
 		return ''
@@ -709,15 +723,21 @@ fn format_args(args []vlip.Value) string {
 	mut out := []u8{}
 	mut i := 0
 	mut next := 1
+	mut spare := ''
 	for i < fm.len {
 		c := fm[i]
-		if c == u8(126) && i + 1 < fm.len && fm[i + 1] == u8(97) {
-			if next < args.len {
-				out << printer.write(args[next]).bytes()
-				next++
+		// `~` followed by a or s.
+		if c == u8(126) && i + 1 < fm.len {
+			which := fm[i + 1]
+			if which == u8(97) || which == u8(115) {
+				if next < args.len {
+					spare = show_value(args[next], which == u8(115))
+					next++
+				}
+				out << spare.bytes()
+				i += 2
+				continue
 			}
-			i += 2
-			continue
 		}
 		out << c
 		i++
@@ -760,7 +780,7 @@ fn (mut m Machine) call_primitive(name string, args []vlip.Value) ! {
 			m.ret()
 			return
 		}
-		'print', 'display' {
+	'print', 'display' {
 			// These two are machine builtins rather than table entries because
 			// they have to reach `host` and `out`, which the prims table cannot
 			// see: PrimFn deliberately takes only its arguments, so that prims
@@ -775,7 +795,7 @@ fn (mut m Machine) call_primitive(name string, args []vlip.Value) ! {
 				if i > 0 {
 					text += ' '
 				}
-				text += show_value(args[i], name == 'print')!
+				text += show_value(args[i], name == 'print')
 				i++
 			}
 			m.out << text

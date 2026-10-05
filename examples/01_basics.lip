@@ -8,7 +8,10 @@
    #| and it nests |#
    still inside |#
 
-#; a datum comment: this whole form is skipped
+;; A datum comment is written `#;` and skips exactly ONE form. It is not a line
+;; comment: `;` is. (This line used to begin `#;`, which made the word `datum` a
+;; top-level form and the whole program failed with "unbound identifier: datum".)
+;; The line below is the real datum comment.
 #;(this form is gone)
 
 ;; --- literals ---
@@ -69,14 +72,30 @@
 
 (count-down 1000000 0)  ;=> 1000000
 
-;; Tail position is not only the last argument of `if`. These are all tail
-;; positions, and all must be optimised:
-(define (via-when n)
+;; Tail position is not only the last argument of `if`. `cond` is nested `if`s and
+;; `when` is one `if`, so a call in tail position inside either is still a tail
+;; call, at any depth.
+(define (via-cond n)
+  (cond [(> n 0) (via-cond (- n 1))]
+        [else 'done]))
+
+(via-cond 100000)  ;=> done
+
+;; And the counterexample, which is why the rule above needs saying at all: put a
+;; form AFTER the recursive call and the call is no longer in tail position. The
+;; continuation stack then grows one frame per level, and because environment
+;; frames are never reclaimed the cost is quadratic rather than merely deep.
+;;
+;; Measured on the development machine at depth 500 / 1000 / 2000 / 4000:
+;; 120 ms / 332 ms / 991 ms / 4047 ms. Doubling the depth quadruples the time,
+;; so 100000 here is roughly forty minutes. That is the whole reason the number
+;; below is 2000 and not 100000.
+(define (not-tail n)
   (when (> n 0)
-    (via-when (- n 1)))
+    (not-tail (- n 1)))
   'done)
 
-(via-when 100000)  ;=> done
+(not-tail 2000)    ;=> done
 
 ;; --- mutual tail recursion ---
 (define (ping n)
