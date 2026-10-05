@@ -1,0 +1,153 @@
+name: release
+
+# Releases are cut from master only, by pushing a version tag.
+#
+# The trigger is a tag rather than a manual dispatch on purpose: a release that
+# can be produced from any branch is a release whose contents depend on which
+# branch someone happened to be standing on. master is the stable line, so the
+# tag is the only thing that decides what ships.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and verify, but do not publish'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  V_COMMIT: 0137eb5d8ebc5d183259309ed08ea06ba9bc27d6
+  V_MACOS_V3_NO_FALLBACK: '1'
+
+jobs:
+  verify:
+    # The gate. Nothing is built for release until this passes, and it runs the
+    # same commands a contributor runs locally, in the order they appear in
+    # CONTRIBUTING.md.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: v
+          key: v-${{ env.V_COMMIT }}
+
+      - name: Build V if needed
+        run: |
+          if [ ! -x v/v ]; then
+            git init -q v
+            cd v
+            git remote add origin https://github.com/vlang/v.git
+            git fetch -q --depth 1 origin "$V_COMMIT"
+            git checkout -q FETCH_HEAD
+            make
+          fi
+
+      - name: Put V on PATH
+        run: echo "$GITHUB_WORKSPACE/v" >> "$GITHUB_PATH"
+
+      - name: Build and test exactly as CONTRIBUTING says
+        run: |
+          v -cc gcc -o vlip vlip.v
+          v -cc gcc -o reader_probe reader_probe.v
+          v -cc gcc -o tail tests/tail_calls.v
+          v -cc gcc -o non_tail tests/non_tail.v
+          v -cc gcc -o loop_forms tests/loop_forms.v
+          set -o pipefail
+          ./tail | tee out.txt
+          ./non_tail | tee -a out.txt
+          ./loop_forms | tee -a out.txt
+          if grep -qE '^FAIL|panic' out.txt; then
+            echo "::error::refusing to release: a check failed"
+            exit 1
+          fi
+          ./reader_probe examples/*.lip
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: v
+          key: v-${{ env.V_COMMIT }}
+      - run: |
+          if [ ! -x v/v ]; then
+            git init -q v && cd v
+            git remote add origin https://github.com/vlang/v.git
+            git fetch -q --depth 1 origin "$V_COMMIT"
+            git checkout -q FETCH_HEAD && make
+          fi
+          echo "$GITHUB_WORKSPACE/v" >> "$GITHUB_PATH"
+
+      - name: Build release binaries
+        run: |
+          mkdir -p dist
+          # Static-ish linux binary via musl would need another toolchain; the
+          # release is a convenience, not a distribution format. Users who care
+          # about a self-contained binary should build from source.
+          v -cc gcc -o dist/vlip-linux   vlip.v
+          v -cc gcc -o dist/vlip-macos   vlip.v
+          v -cc gcc -o os:windows -cc gcc -o dist/vlip.exe vlip.v
+          ls -la dist
+
+      - name: Package
+        run: |
+          cd dist
+          tar czf ../vlip-linux-macos.tar.gz vlip-linux vlip-macos
+          zip -q ../vlip-windows.zip vlip.exe
+          cd ..
+          mkdir -p site_out
+          v -cc gcc -o sitegen tools/sitegen.v
+          ./sitegen
+          tar czf ../vlip-site.tar.gz site_out
+          sha256sum vlip-*.tar.gz vlip-*.zip vlip-site.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vlip-dist
+          path: |
+            dist/vlip-linux
+            dist/vlip-macos
+            dist/vlip.exe
+            vlip-linux-macos.tar.gz
+            vlip-windows.zip
+            vlip-site.tar.gz
+            SHA256SUMS
+
+  publish:
+    needs: build
+    # Only tags publish. A manual dispatch builds and verifies, then stops, so a
+    # dry run can never create a release by accident.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: vlip-dist
+          path: dist
+
+      - name: Create the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/vlip-linux-macos.tar.gz
+            dist/vlip-windows.zip
+            dist/vlip-site.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true
+          body: |
+            Built from `${{ github.ref }}` by `.github/workflows/release.yml`.
+
+            Reproduce it locally with the commands in `CONTRIBUTING.md`. The
+            same three suites run in the `verify` job before anything here was
+            built, and the site in `vlip-site.tar.gz` is the output of
+            `tools/sitegen.v` rather than something edited by hand.

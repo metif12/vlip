@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'site/**'
+      - 'tools/sitegen.v'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -21,32 +22,65 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      V_COMMIT: 0137eb5d8ebc5d183259309ed08ea06ba9bc27d6
+      V_MACOS_V3_NO_FALLBACK: '1'
     steps:
       - uses: actions/checkout@v4
 
-      # The site is currently hand-written HTML. The plan is to generate it
-      # from vlip itself (docs/010-roadmap.md, final phase), at which point this
-      # job grows a `v -cc gcc -o sitegen site/build.lip && ./sitegen` step and
-      # the copy below becomes the fallback rather than the product.
+      - uses: actions/cache@v4
+        with:
+          path: v
+          key: v-${{ env.V_COMMIT }}
+
+      - name: Build V if needed
+        run: |
+          if [ ! -x v/v ]; then
+            git init -q v && cd v
+            git remote add origin https://github.com/vlang/v.git
+            git fetch -q --depth 1 origin "$V_COMMIT"
+            git checkout -q FETCH_HEAD && make
+          fi
+          echo "$GITHUB_WORKSPACE/v" >> "$GITHUB_PATH"
+
+      # The site is generated, not hand-edited. `tools/sitegen.v` reads the page
+      # structure from V and the strings from site/i18n/*.json, and emits every
+      # language directory. Sixteen languages times four pages is not something
+      # to keep consistent by hand.
+      #
+      # It fails the build if any language directory comes out empty, so a
+      # translation that silently produced nothing cannot reach production.
+      - name: Generate the site
+        run: |
+          v -cc gcc -o sitegen tools/sitegen.v
+          ./sitegen | tee sitegen.log
+
+      - name: Check the output is complete
+        run: |
+          test -f site_out/index.html
+          for d in en fa ar es fr de pt ru uk pl nl tr hi zh ja ko; do
+            for p in "" features docs guides; do
+              f="site_out/$d/$p/index.html"
+              if [ "$d" = "en" ] && [ -z "$p" ]; then f="site_out/index.html"; fi
+              test -s "$f" || { echo "::error::missing or empty $f"; exit 1; }
+            done
+          done
+          pages=$(find site_out -name index.html | wc -l)
+          echo "generated $pages pages"
+          test "$pages" -eq 64
+
       - name: Assemble site
         run: |
-          mkdir -p _site
-          cp -r site/. _site/
-          cp README.md _site/README.md
-          test -f _site/index.html
-
-      - name: Check for broken local links
-        run: |
-          if grep -oE 'href="/[^"]*"' _site/index.html; then
-            echo "::error::site uses absolute paths; Pages serves from a subpath"
-            exit 1
-          fi
+          cp -r site/assets site_out/assets
+          cp README.md site_out/README.md
+          cp CONTRIBUTING.md site_out/CONTRIBUTING.md
+          test -f site_out/index.html
 
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: site_out
 
   deploy:
     needs: build

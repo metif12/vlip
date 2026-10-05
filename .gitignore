@@ -23,3 +23,12 @@
 tools/*.exe
 tmp/
 tests/out.txt
+
+# Generated website: rebuilt by tools/sitegen.v, never edited.
+site_out/
+tools/*.exe
+*.exe
+*.tar.gz
+SHA256SUMS
+dist/
+
