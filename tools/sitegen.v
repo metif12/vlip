@@ -28,6 +28,12 @@ import json2
 
 // ---------------------------------------------------------------- content ---
 
+// site_root is the address GitHub Pages serves this site from. It appears in
+// exactly one place -- the hreflang alternate links -- because those are the only
+// URLs on the page that must be absolute. Everything else is relative, so the
+// site still works from a file:// path or a different mount point.
+const site_root = 'https://metif12.github.io/vlip'
+
 struct Lang {
 	code string
 	name string
@@ -396,8 +402,17 @@ fn cell(t Tr, en Tr, s string) string {
 // one value per UTF-8 byte: Persian came out as the digits 216174216167... and
 // the CJK pages would have been just as wrong. Bytes at or above 0x80 are passed
 // through untouched, which leaves every UTF-8 sequence intact.
-fn esc(s string) string {
-	mut out := []u8{}
+// esc escapes the five characters that matter in HTML text and attributes, byte
+// by byte.
+//
+// BYTES, not runes. The obvious version iterates the string as characters, which
+// on V means bytes anyway but reads as if it did not -- and the reason it says so
+// here is that a wrong answer looks identical. Reading the generated Persian page
+// through a Windows console that cannot represent Persian shows every non-ASCII
+// character as `?`, which is indistinguishable from a generator that mangled it.
+// Two of those were chased before the bytes were dumped and found correct. esc
+// appends the byte it was given, always; no branch produces a `?`.
+fn esc(s string) string {	mut out := []u8{}
 	bs := s.bytes()
 	mut i := 0
 	for i < bs.len {
@@ -429,12 +444,19 @@ fn esc(s string) string {
 //   root_base -- back to the site root. Needed for assets, and for the
 //                language switcher, which crosses languages and therefore
 //                crosses the prefix.
+// up is the relative path from a page back to the site root.
+//
+// At depth 0 it returns './' rather than ''. An empty base produced href="" on
+// the English root -- for the brand link, for every nav item and for the current
+// language in the switcher. Browsers resolve href="" to the current URL, so it
+// looked right; but it is not a URL, it is nothing, and hreflang links want
+// something a crawler can resolve.
 fn up(n int) string {
 	mut s := ''
 	for _ in 0 .. n {
 		s += '../'
 	}
-	return s
+	return s + './'
 }
 
 fn self_base(p Page) string {
@@ -482,17 +504,31 @@ fn render_head(t Tr, p Page, en Tr, title string, desc string) string {
 	s += '<link rel="stylesheet" href="${base}assets/style.css">\n'
 	// Alternate links: this is what makes the language switcher crawlable and
 	// what lets a search engine index all sixteen.
+	//
+	// ABSOLUTE URLs, not the page's own relative base. The hreflang attribute is
+	// specifically for telling a crawler where the same content lives in another
+	// language, and a relative URL resolved against a different page means
+	// something different on every one of the sixty-four. Relative paths are right
+	// for navigation and wrong here, so this is the one place the site needs to
+	// know its own address.
 	for l in langs() {
-		if l.code == 'en' {
-			s += '<link rel="alternate" hreflang="en" href="${base}">\n'
-		} else {
-			s += '<link rel="alternate" hreflang="${l.code}" href="${base}${l.code}/${p.url}">\n'
-		}
+		s += '<link rel="alternate" hreflang="${l.code}" href="${site_url(l, p)}">\n'
 	}
-	s += '<link rel="alternate" hreflang="x-default" href="${base}">\n'
+	s += '<link rel="alternate" hreflang="x-default" href="${site_url(langs()[0], p)}">\n'
 	s += '</head>\n'
 	s += render_nav(t, p, en)
 	return s
+}
+
+// site_url is the absolute address of page p in language l.
+//
+// Kept next to the generator rather than configured, because a generated site
+// with a wrong absolute URL is worse than one with a wrong relative one: the
+// relative ones break visibly on click, the absolute ones are just wrong in a
+// search index where nobody looks.
+fn site_url(l Lang, p Page) string {
+	target := if l.code == 'en' { p.url } else { '${l.code}/${p.url}' }
+	return site_root + '/' + target
 }
 
 fn render_nav(t Tr, p Page, en Tr) string {
