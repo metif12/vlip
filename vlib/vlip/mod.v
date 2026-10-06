@@ -576,6 +576,10 @@ pub:
 	name   string
 	arity  int
 	rest   bool
+	// rest_name is the name after the dot. It is kept out of `params` so that
+	// binding it cannot collide with an ordinary parameter, and out of `arity` so
+	// that arity counts only the FIXED parameters.
+	rest_name string
 	// Labelled parameters. `opt_from` is the index of the first one, or -1.
 	// The keyword names and defaults are parallel arrays from there on, and a
 	// default of `no_default` means the label is required.
@@ -612,18 +616,16 @@ pub fn new_closure(params []string, body NodeId, env EnvId, name string) Value {
 // name; the rest name is kept separately so binding it cannot collide with an
 // ordinary parameter.
 pub fn new_rest_closure(params []string, rest_name string, body NodeId, env EnvId, name string) Value {
-	mut all := []string{}
-	all << params
-	all << rest_name
 	return Value{
 		tag: .closure
 		payload: &Closure{
-			params: params
-			body:   body
-			env:    env
-			name:   name
-			arity:  params.len
-			rest:   true
+			params:     params,
+			body:       body,
+			env:        env,
+			name:       name,
+			arity:      params.len,
+			rest:       true,
+			rest_name:  rest_name,
 		}
 	}
 }

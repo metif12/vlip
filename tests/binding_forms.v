@@ -245,9 +245,12 @@ fn main() {
 	// `(panic "x")`-style input used to unwind through the embedding host and
 	// kill it. Every one of these has to come back as an `err` the caller can
 	// inspect, which is the whole gate on "errors become values".
-	s.check_err('error raises', '(error "boom")', 'boom')
+	// `error` BUILDS an error value; `raise` throws one. They are separate because
+	// `(raise (error "area: unknown shape ~a" shape))` reads as one expression.
+	// `error` used to abort on the spot, which made `raise` unreachable.
+	s.check('error builds a value', '(error "boom")', '(err "boom")')
 	s.check_err('raise raises', '(raise (error "boom"))', 'boom')
-	s.check_err('format inside error', '(error "at ~a" 99)', 'at 99')
+	s.check('format inside error', '(error "at ~a" 99)', '(err "at 99")')
 	s.check_err('unknown primitive', '(nope 1)', 'unbound identifier')
 	s.check_err('car of an integer', '(car 1)', 'expects a pair')
 	s.check_err('vector-ref out of range', '(vector-ref [1 2] 9)', 'out of range')

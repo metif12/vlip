@@ -1195,7 +1195,7 @@ fn (mut m Machine) call_closure(c &vlip.Closure, args []vlip.Value) ! {
 			m.envs.define(frame, c.params[i], use_args[i])
 			i++
 		}
-		m.envs.define(frame, c.params[c.arity], vlip.list_from(use_args[c.arity..]))
+		m.envs.define(frame, c.rest_name, vlip.list_from(use_args[c.arity..]))
 		m.env = frame
 		m.goto(c.body)
 		return
@@ -3121,38 +3121,49 @@ pub fn (mut m Machine) transform_let(kids []vlip.NodeId) !vlip.NodeId {
 	if binds.len == 0 {
 		return m.make_begin(kids[2..])
 	}
-	// Each binding becomes one lambda. A destructuring binding needs TWO: one to
-	// bind the value to a temporary, and one to bind the names extracted from it.
-	// They cannot be one lambda because a lambda application evaluates all of its
-	// arguments in the CALLER's scope, where the temporary is not yet bound.
-	mut groups := []Group{}
+	// `let` evaluates every value in the ENCLOSING scope, then binds all names at
+	// once. Nesting the bindings -- which is what this did first -- makes each
+	// value see the names bound before it, which is `let*` semantics and wrong:
+	// `(let ([a 1] [b (a 2)]) b)` stopped erroring on the unbound `a`.
+	//
+	// So the values are bound by ONE lambda, plain names and destructuring
+	// temporaries alike, and the destructuring happens in nested lets INSIDE the
+	// body where the temporaries are already bound.
+	mut params := []vlip.NodeId{}
+	mut args := []vlip.NodeId{}
+	mut destructures := []Destructure{}
 	mut i := 0
 	for i < binds.len {
 		if m.is_destructuring(binds[i]) {
 			tmp := m.sym_node(m.fresh('let'))
-			groups << Group{
-				params: [tmp]
-				args:   [m.binding_value(binds[i])]
-			}
-			mut names := []vlip.NodeId{}
-			mut vals := []vlip.NodeId{}
-			for p in m.destructuring(m.binding_pattern(binds[i]), tmp)! {
-				names << p.name
-				vals << p.accessor
-			}
-			groups << Group{
-				params: names
-				args:   vals
+			params << tmp
+			args << m.binding_value(binds[i])
+			destructures << Destructure{
+				temp:  tmp
+				parts: m.destructuring(m.binding_pattern(binds[i]), tmp)!
 			}
 		} else {
-			groups << Group{
-				params: [m.binding_name(binds[i])]
-				args:   [m.binding_value(binds[i])]
-			}
+			params << m.binding_name(binds[i])
+			args << m.binding_value(binds[i])
 		}
 		i++
 	}
-	return m.nest_lets(groups, kids[2..])
+	mut dgroups := []Group{}
+	for d in destructures {
+		mut names := []vlip.NodeId{}
+		mut vals := []vlip.NodeId{}
+		for p in d.parts {
+			names << p.name
+			vals << p.accessor
+		}
+		dgroups << Group{
+			params: names
+			args:   vals
+		}
+	}
+	inner := m.nest_lets(dgroups, kids[2..])
+	lam := m.node_of('lambda', [m.list_of(params), inner])
+	return m.call_node(lam, args)
 }
 
 // Group is one lambda's parameter list and argument list. `let` is a nest of
