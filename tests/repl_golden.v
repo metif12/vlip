@@ -238,14 +238,19 @@ fn (mut s Suite) golden_stdin_to_stdout() bool {
 	// stdin.
 	shell := '"${exe}" < "${script}" > "${got}"'
 	os.system(shell)
-	actual := os.read_file(got) or {
+	mut actual := os.read_file(got) or {
 		s.fail('golden stdin to stdout', 'cannot read ${got}; the binary produced nothing')
 		return false
 	}
-	expected := os.read_file(want_path) or {
+	mut expected := os.read_file(want_path) or {
 		s.fail('golden stdin to stdout', 'missing fixture ${want_path}')
 		return false
 	}
+	// The fixture was written on Windows and has CRLF; the REPL writes LF. The
+	// comparison is about what the session printed, not which line ending the
+	// platform happened to use, so both are normalised to LF first.
+	actual = actual.replace('\r\n', '\n')
+	expected = expected.replace('\r\n', '\n')
 	if actual == expected {
 		println('ok   golden stdin to stdout => ${actual.trim_space().split('\n').len} lines match')
 		return true
