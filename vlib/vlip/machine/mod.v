@@ -994,7 +994,6 @@ fn (mut m Machine) step_return() !bool {
 			// which adds one again -- every result bound to r2, r3, ... and the
 			// first result was unreachable.
 			if parts.len == 2 {
-				eprintln('DBG use binding ${m.callee_name(kids[1])} = ${printer.write(parts[1])}')
 				m.envs.define(frame, m.callee_name(kids[1]), parts[1])
 			} else {
 				mut idx := 0
