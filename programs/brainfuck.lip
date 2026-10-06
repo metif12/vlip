@@ -1,0 +1,92 @@
+;; programs/brainfuck.lip -- a Brainfuck interpreter in vlip.
+;;
+;; This is the smallest program that requires the interpreter to drive another
+;; machine: the Brainfuck tape is a vector, the program is a string, and the
+;; interpreter is a recursive function over both. If vlip can run this, it can
+;; be embedded.
+;;
+;; The tape is a vector of 30000 cells, each a byte. The program is a string.
+;; The interpreter walks the program one character at a time, updating the tape
+;; and the pointer, and recursing. Tail calls are what make this a loop rather
+;; than a stack overflow: every recursive call is in tail position.
+
+;; Create a zero-filled tape of `n` cells.
+(define (make-tape n)
+  (make-tape-loop n (vector)))
+
+(define (make-tape-loop i acc)
+  (if (= i 0)
+    acc
+    (make-tape-loop (- i 1) (vector-append acc (vector 0)))))
+
+;; Find the matching `]` for a `[` at position `start`.
+(define (bf-find-close program start)
+  (bf-scan-forward program (+ start 1) 1 (string-length program)))
+
+;; Find the matching `[` for a `]` at position `start`.
+(define (bf-find-open program start)
+  (bf-scan-backward program (- start 1) 1))
+
+(define (bf-scan-forward program pc depth len)
+  (if (>= pc len)
+    (error "brainfuck: unmatched [")
+    (let cmd (string-slice program pc (+ pc 1))
+      (match cmd
+        ["[" (bf-scan-forward program (+ pc 1) (+ depth 1) len)]
+        ["]" (if (= depth 1)
+               pc
+               (bf-scan-forward program (+ pc 1) (- depth 1) len))]
+        [_ (bf-scan-forward program (+ pc 1) depth len)]))))
+
+(define (bf-scan-backward program pc depth)
+  (if (< pc 0)
+    (error "brainfuck: unmatched ]")
+    (let cmd (string-slice program pc (+ pc 1))
+      (match cmd
+        ["]" (bf-scan-backward program (- pc 1) (+ depth 1))]
+        ["[" (if (= depth 1)
+               pc
+               (bf-scan-backward program (- pc 1) (- depth 1)))]
+        [_ (bf-scan-backward program (- pc 1) depth)]))))
+
+;; Read one character from stdin. Returns 0 on EOF.
+(define (bf-read-char)
+  (let line (read-line)
+    (if (string-blank? line)
+      0
+      (rune->integer (string->rune (string-slice line 0 1))))))
+
+;; Run a Brainfuck program. `tape` is the tape, `ptr` is the pointer, `pc` is
+;; the program counter.
+(define (bf-run tape ptr pc program)
+  (let len (string-length program)
+    (if (>= pc len)
+      'done
+      (let cmd (string-slice program pc (+ pc 1))
+        (match cmd
+          ["+" (array-set! tape ptr (+ (vector-ref tape ptr) 1))
+               (bf-run tape ptr (+ pc 1) program)]
+          ["-" (array-set! tape ptr (- (vector-ref tape ptr) 1))
+               (bf-run tape ptr (+ pc 1) program)]
+          [">" (bf-run tape (+ ptr 1) (+ pc 1) program)]
+          ["<" (bf-run tape (- ptr 1) (+ pc 1) program)]
+          ["." (display (integer->rune (vector-ref tape ptr)))
+               (bf-run tape ptr (+ pc 1) program)]
+          ["," (array-set! tape ptr (bf-read-char))
+               (bf-run tape ptr (+ pc 1) program)]
+          ["[" (if (= (vector-ref tape ptr) 0)
+                 (bf-run tape ptr (bf-find-close program pc) program)
+                 (bf-run tape ptr (+ pc 1) program))]
+          ["]" (if (not= (vector-ref tape ptr) 0)
+                 (bf-run tape ptr (bf-find-open program pc) program)
+                 (bf-run tape ptr (+ pc 1) program))]
+          [_ (bf-run tape ptr (+ pc 1) program)])))))
+
+;; Run a Brainfuck program from a string.
+(define (brainfuck program)
+  (let tape (make-tape 30000)
+    (bf-run tape 0 0 program)))
+
+;; Hello World: the canonical first program.
+(brainfuck "++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.")
+(print "brainfuck ok")

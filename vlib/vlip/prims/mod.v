@@ -133,6 +133,8 @@ pub fn table() map[string]vlip.PrimFn {
 	p['struct-name'] = prim_struct_name
 	p['struct-ref'] = prim_struct_ref
 	p['struct-set!'] = prim_struct_set
+	p['integer->rune'] = prim_integer_to_rune
+	p['rune->integer'] = prim_rune_to_integer
 	p['__make-struct'] = prim_make_struct
 	return p
 }
@@ -893,6 +895,38 @@ fn prim_struct_ref(args []vlip.Value) !vlip.Value {
 		return error('struct-ref: ${s.name} has no field ${k}')
 	}
 	return s.get(k)
+}
+
+// integer->rune and rune->integer convert between a byte value and a character.
+// Brainfuck needs both: `.` prints the cell as a character, `,` reads a character
+// and stores its value.
+fn prim_integer_to_rune(args []vlip.Value) !vlip.Value {
+	n := need_int('integer->rune', args[0])!
+	if n < 0 || n > 0x10FFFF {
+		return error('integer->rune: ${n} is not a code point')
+	}
+	return vlip.rune(u32(n))
+}
+
+// string->rune converts a one-character string to a rune. Brainfuck's `,`
+// command reads a character and needs to convert it to a byte value.
+fn prim_string_to_rune(args []vlip.Value) !vlip.Value {
+	s := need_str('string->rune', args[0])!
+	if s.len != 1 {
+		return error('string->rune: expected a one-character string, got "${s}"')
+	}
+	return vlip.rune(s[0])
+}
+
+fn prim_rune_to_integer(args []vlip.Value) !vlip.Value {
+	v := args[0]
+	if v.tag == .rune {
+		return vlip.integer(v.as_int())
+	}
+	if v.tag == .integer {
+		return v
+	}
+	return error('rune->integer: ${printer.write(v)} is not a character')
 }
 
 fn prim_struct_set(args []vlip.Value) !vlip.Value {

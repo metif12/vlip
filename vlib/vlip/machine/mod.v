@@ -431,6 +431,7 @@ fn (mut m Machine) eval_symbol(name string) ! {
 fn machine_builtin(name string) bool {
 	return name in [
 		'apply', 'error', 'raise', 'format', 'gensym', 'print', 'display', 'echo',
+		'read-line',
 		'map', 'filter', 'reject', 'keep', 'fold', 'reduce', 'for-each', 'vector-map',
 		'any?', 'every?', 'sort-by', 'ok', 'err', 'ok?', 'err?', 'ok-value',
 		'err-value', 'map-result', 'unwrap-or', 'try-result', 'lazy-unwrap',
@@ -1489,6 +1490,15 @@ k := m.kstack[idx]
 			m.out << text
 			m.host.host_print(text)
 			m.val = vlip.nil_value()
+			m.ret()
+			return
+		}
+		'read-line' {
+			// Read a line from the host. Brainfuck's `,` command needs this: it
+			// reads a character and stores its value, and a line is the smallest
+			// unit the host can read.
+			line := m.host.host_read_line() or { '' }
+			m.val = vlip.string(line)
 			m.ret()
 			return
 		}

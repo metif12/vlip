@@ -1,0 +1,3 @@
+(print (string #\A))
+(print (rune? #\A))
+(print (string-length (string #\A)))

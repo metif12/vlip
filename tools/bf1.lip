@@ -1,0 +1,3 @@
+(print (string-ref "abc" 0))
+(print (rune? (string-ref "abc" 0)))
+(print (integer? (string-ref "abc" 0)))

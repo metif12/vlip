@@ -1,0 +1,3 @@
+(print (string-slice "abc" 0 1))
+(print (string-length (string-slice "abc" 0 1)))
+(print (string-slice "abc" 1 2))
