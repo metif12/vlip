@@ -688,6 +688,8 @@ pub enum KontTag {
 	use_k // binding the values of an ok Result
 	match_k // choosing a match clause
 	guard_k // evaluating a #:when guard
+	collect_k // evaluating the elements of a vector, table or array literal
+	try_k // `try`: running one body form, or its #:finally
 }
 
 pub struct Kont {

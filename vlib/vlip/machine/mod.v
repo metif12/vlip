@@ -55,6 +55,10 @@ pub mut:
 	form      vlip.NodeId
 	env       vlip.EnvId
 	val       vlip.Value
+	// val2 holds the value a `try` is going to return while its #:finally runs.
+	// One slot, not a stack: `#:finally` runs once and its own body does not
+	// touch val2.
+	val2      vlip.Value
 	steps     int
 	max_steps int = 100_000_000
 	max_kont  int = 4_000_000
@@ -358,8 +362,15 @@ fn (mut m Machine) step_eval() ! {
 			}
 			return m.eval_list(id, kids)
 		}
+		.table, .vector, .array {
+			return m.eval_collection(id)
+		}
 		else {
-			// vectors, tables, arrays, bytes as literals
+			// Everything self-evaluating that has no arm above -- rationals,
+			// characters, bytes. A match with no `else` compiles here and then
+			// spins at run time: nothing sets `m.val`, so the machine re-enters
+			// the same form until the step limit fires. That is what `(print 1/3)`
+			// did: a step limit error instead of a number.
 			m.val = m.datum_to_value(id)
 			m.ret()
 			return
@@ -955,10 +966,14 @@ fn (mut m Machine) step_return() !bool {
 				return true
 			}
 			frame := m.envs.new_env(k.env)
-			mut n := 1
-			for n < parts.len {
-				m.envs.define(frame, m.use_name(n), parts[n])
-				n++
+			// parts[0] is the `ok` symbol, so the first value is parts[1] and
+			// gets the first name. The loop used to start at 1 and pass that same
+			// n to use_name, which adds one again -- every result bound to r2, r3,
+			// ... and the first result was unreachable.
+			mut idx := 0
+			for pi := 1; pi < parts.len; pi++ {
+				m.envs.define(frame, m.use_name(idx), parts[pi])
+				idx++
 			}
 			m.enter_clause_body(frame, m.make_begin(kids[2..]))!
 			return true
@@ -983,6 +998,53 @@ fn (mut m Machine) step_return() !bool {
 			}
 			m.env = k.env
 			m.try_clauses(next, subj)!
+			return true
+		}
+		.try_k {
+			// See eval_try for what each `slot` means.
+			if k.slot == -1 {
+				m.val = m.val2
+				m.ret()
+				return true
+			}
+			if k.slot == -3 {
+				return m.try_finish(k, true)
+			}
+			if k.slot == -4 {
+				// `#:finally` on the way out of a raise with no catch clause. The
+				// message rode through val2 as a plain string.
+				return error('raised: ${m.val2.as_string()}')
+			}
+			next := k.slot + 1
+			if next < k.clauses.len {
+				mut k2 := k
+				k2.slot = next
+				m.push(k2)
+				m.env = k.env
+				m.goto(k.clauses[next])
+				return true
+			}
+			// The last body form finished. The result goes to val2 so #:finally
+			// cannot clobber it.
+			m.val2 = m.val
+			return m.try_finish(k, true)
+		}
+		.collect_k {
+			// One element of a collection literal has finished. Keep it, move to the
+			// next, and build the collection when the last one is in.
+			mut k2 := k
+			k2.acc << m.val
+			kids := m.arena.kids(k.rest)
+			next := k.slot + 1
+			if next < kids.len {
+				k2.slot = next
+				m.push(k2)
+				m.env = k.env
+				m.goto(kids[next])
+				return true
+			}
+			m.val = m.build_collection(k.rest, k2.acc)!
+			m.ret()
 			return true
 		}
 		.assert_k {
@@ -1315,10 +1377,64 @@ fn (mut m Machine) call_primitive(name string, args []vlip.Value) ! {
 			return
 		}
 		'error' {
-			return error('error: ${format_args(args)}')
+			// `error` BUILDS an error value; `raise` throws one. They are separate
+			// because `(raise (error "area: unknown shape ~a" shape))` reads as one
+			// expression, and because a value can be passed around before it is
+			// raised. `error` used to abort on the spot, which made `raise`
+			// unreachable and turned every raise site into an abort.
+			m.val = vlip.list_from([vlip.symbol('err'), vlip.string(format_args(args))])
+			m.ret()
+			return
 		}
-		'raise' {
-			return error('raised: ${format_args(args)}')
+		// raise throws a value. The value may already be an `(err msg)` result -- which
+// is what `(raise (error "..."))` produces -- or a bare message.
+'raise' {
+	// `raise` unwinds to the nearest `try` rather than aborting the
+			// machine. With no `try` in sight it is an ordinary error, which is
+			// what makes it safe at the top level of a program.
+			//
+			// The innermost frame wins, so `slot` is assigned on every hit and the
+			// last one read after the loop.
+			mut idx := -1
+			for i in 0 .. m.kstack.len {
+				if m.kstack[i].tag == .try_k {
+					idx = i
+				}
+			}
+			mut msg := ''
+			if args.len == 1 && args[0].tag == .pair {
+				parts := prims.seq(args[0]) or {
+					return error('raise: an (err ...) value is not readable')
+				}
+				if parts.len > 1 {
+					msg = parts[1].as_string()
+				} else {
+					msg = printer.write(args[0])
+				}
+			} else {
+				msg = format_args(args)
+			}
+			if idx < 0 {
+				return error('raised: ${msg}')
+			}
+k := m.kstack[idx]
+			m.kstack = m.kstack[..idx]
+			if k.expr == vlip.no_node {
+				// No handler, so the error still propagates -- but #:finally runs
+				// first, and `val2` carries the message through it.
+				if k.rest == vlip.no_node {
+					return error('raised: ${msg}')
+				}
+				mut k2 := k
+				k2.slot = -4
+				m.val2 = vlip.string(msg)
+				m.push(k2)
+				m.env = k.env
+				m.goto(k.rest)
+				return
+			}
+			m.val2 = vlip.list_from([vlip.symbol('err'), vlip.string(msg)])
+			return m.try_caught(k)
 		}
 		'format' {
 			m.val = vlip.string(format_args(args))
@@ -1508,7 +1624,7 @@ fn (mut m Machine) call_primitive(name string, args []vlip.Value) ! {
 // ------------------------------------------------------------ special forms
 
 pub fn special_form(name string) bool {
-	return name in ['quote', 'if', 'define', 'set!', 'lambda', 'fn', 'begin', 'let', 'let*', 'letrec', 'and', 'or', 'when', 'unless', 'cond', 'case', 'loop', 'dotimes', 'use', 'match', 'match*', 'struct', 'struct-out', 'provide', 'require', 'let-assert', 'do', 'time', 'assert', '->', '->>', '|>', 'as->', 'cond->', 'def', 'defmacro']
+	return name in ['quote', 'if', 'define', 'set!', 'lambda', 'fn', 'begin', 'let', 'let*', 'letrec', 'and', 'or', 'when', 'unless', 'cond', 'case', 'loop', 'dotimes', 'use', 'match', 'match*', 'struct', 'struct-out', 'provide', 'require', 'let-assert', 'do', 'time', 'assert', '->', '->>', '|>', 'as->', 'cond->', 'def', 'defmacro', 'try']
 }
 
 fn (mut m Machine) eval_special(name string, id vlip.NodeId, kids []vlip.NodeId) ! {
@@ -1669,6 +1785,9 @@ mut nf := m.kont(.set_k)
 		'use' {
 			return m.eval_use(kids)
 		}
+		'try' {
+			return m.eval_try(kids)
+		}
 		'do' {
 			// `(do a b)` is `(begin a b)`, written so a macro can emit it. The
 			// examples' macros use it because `begin` inside a macro reads as the
@@ -1682,7 +1801,7 @@ mut nf := m.kont(.set_k)
 			m.goto(m.transform_match_star(kids))
 		}
 		'let-assert' {
-			m.goto(m.transform_let_assert(kids))
+			m.goto(m.transform_let_assert(kids)!)
 		}
 		'struct' {
 			return m.eval_struct(kids)
@@ -2553,20 +2672,38 @@ mut items := []vlip.NodeId{}
 // The subject is bound once and the `match` runs against the temporary, so a
 // VALUE with a side effect is evaluated exactly once even though the transform
 // mentions it twice.
-fn (mut m Machine) transform_let_assert(kids []vlip.NodeId) vlip.NodeId {
-	if kids.len < 4 {
-		return m.make_begin(kids[3..])
+fn (mut m Machine) transform_let_assert(kids []vlip.NodeId) !vlip.NodeId {
+	// `(let assert PATTERN VALUE body...)` is a match with no other clause, so a
+	// failure is a hard error naming the pattern instead of falling through to
+	// nil.
+	//
+	// `kids` is [assert, BINDINGS, body...], where BINDINGS is the single
+	// two-element vector [PATTERN VALUE]. An earlier version read the pattern out
+	// of kids[1] and the value out of kids[2] -- the BINDINGS VECTOR and the first
+	// body form -- so with a one-form body it fell into a `len < 4` guard and
+	// returned nil, and `parse-in` in the standard library returned nil for every
+	// input.
+	//
+	// The body goes INSIDE the matching clause, not after the match. A match binds
+	// its names in its own clause frame, so a body sequenced after it saw none of
+	// them -- "unbound identifier: s". Running the body in the clause means the
+	// pattern bindings are in scope exactly where they should be.
+	//
+	// There is no temporary: `match` evaluates its subject once, so a VALUE with a
+	// side effect is still evaluated exactly once.
+	if kids.len < 3 {
+		return error('let assert needs a pattern and a value')
 	}
-	tmp := m.sym_node(m.fresh('assert'))
+	bindings := m.arena.kids(kids[1])
+	if bindings.len != 2 {
+		return error('let assert takes exactly one binding, written [PATTERN VALUE]')
+	}
 	fail := m.node_of('error', [m.string_node(
 		'let assert failed: the value does not match the pattern')])
-	mitems := m.node_of('match', [tmp, m.list_of([kids[1], m.sym_node('nil')]),
+	return m.node_of('match', [bindings[1],
+		m.list_of([bindings[0], m.make_begin(kids[2..])]),
 		m.list_of([m.sym_node('_'), fail])])
-	return m.node_of('let', [m.list_of([m.list_of([tmp, kids[2]])]), mitems])
 }
-
-// use => bind the values of an ok Result, or return the error unchanged.
-//
 // It is a continuation tag rather than a transform, and the reason is the one
 // thing a transform cannot do here: `use` does not know how many names to bind.
 // `(use (parse "x") a b)` binds two, `(use (commit conn) (print "done"))` binds
@@ -2587,10 +2724,15 @@ fn (mut m Machine) eval_use(kids []vlip.NodeId) ! {
 	m.goto(kids[1])
 }
 
-// use_bind_names are the names `use` binds. They are generated, so a body cannot
-// refer to them by name -- which is exactly what `let` is for when it wants to.
+// use_bind_names are the names `use` binds. `r1`, `r2`, ... because the whole
+// point of `use` is a body you can read without counting parens, and `r1` says
+// "the first value the call returned" in a way `use_1` does not.
+//
+// They are ordinary symbols, so a body CAN refer to them by name. The earlier
+// comment here claimed it could not, which was simply wrong -- nothing stops a
+// reader from writing `r1` in a body.
 fn (m &Machine) use_name(i int) string {
-	return 'use_' + i.str()
+	return 'r' + (i + 1).str()
 }
 
 // ------------------------------------------------------------------ macros
@@ -2907,7 +3049,7 @@ pub fn (mut m Machine) transform_let(kids []vlip.NodeId) !vlip.NodeId {
 	// `assert` as an ordinary variable name everywhere else.
 	if kids.len > 1 && m.arena.node(kids[1]).tag == .sym
 		&& m.arena.node(kids[1]).value == 'assert' {
-		return m.transform_let_assert(kids[1..])
+		return m.transform_let_assert(kids[1..])!
 	}
 	// `(let NAME VALUE body...)` is the one-binding shorthand. It is unambiguous
 	// because a bracketed binding list can never be a symbol: kids[1] being a
@@ -3091,6 +3233,162 @@ pub fn (mut m Machine) destructuring(pattern vlip.NodeId, value vlip.NodeId) ![]
 		return out
 	}
 	return error('${m.render_node(pattern)} cannot be a destructuring binding')
+}
+
+// empty_collection is the literal with no elements. A table and an array are
+// distinct tags even when empty, because the reader told us which was written.
+// try => run the body, and hand a raised error to a handler instead of aborting.
+//
+//	(try body...
+//	     #:catch [(err e) (print "caught:" (err-message e))]
+//	     #:finally [(print "cleanup")])
+//
+// This cannot be a transform, because the catch clause is a PATTERN and patterns
+// are runtime data: the handler has to be matched against the error value when
+// the error arrives. So `try` pushes a frame that holds the body forms and
+// evaluates them one at a time; `raise` unwinds the continuation stack to it.
+//
+// `slot` says what the frame is waiting for:
+//	>= 0  body[slot] has just finished
+//	-1    #:finally has just finished -- return val2
+//	-3    the catch clause has just finished -- run #:finally, or return val2
+fn (mut m Machine) eval_try(kids []vlip.NodeId) ! {
+	if kids.len < 2 {
+		return error('try needs a body')
+	}
+	mut body := []vlip.NodeId{}
+	mut catch := vlip.no_node
+	mut finally := vlip.no_node
+	mut i := 1
+	for i < kids.len {
+		d := m.arena.node(kids[i])
+		if d.tag == .kw && (d.value == 'catch' || d.value == 'finally') {
+			if i + 1 >= kids.len {
+				return error('try: #:${d.value} needs ${if d.value == 'catch' { 'a clause' } else { 'a body' }}')
+			}
+			if d.value == 'catch' {
+				catch = kids[i + 1]
+			} else {
+				finally = kids[i + 1]
+			}
+			i += 2
+			continue
+		}
+		body << kids[i]
+		i++
+	}
+	if body.len == 0 {
+		return error('try needs a body')
+	}
+	mut tf := m.kont(.try_k)
+	// Kont is ONE struct, so the frame has no room for three lists. The body
+	// forms go in `clauses`, which is a []NodeId and is free here, and the two
+	// clauses in `expr` and `rest`, which are NodeIds.
+	tf.clauses = body
+	tf.expr = catch
+	tf.rest = finally
+	tf.slot = 0
+	tf.env = m.env
+	m.push(tf)
+	m.goto(body[0])
+}
+
+// try_finish is the tail of a `try` in every state: `#:finally` runs at most
+// once, and whatever it evaluates is discarded in favour of the pending result.
+fn (mut m Machine) try_finish(k vlip.Kont, run_finally bool) !bool {
+	if run_finally && k.rest != vlip.no_node {
+		mut k2 := k
+		k2.slot = -1
+		m.push(k2)
+		m.env = k.env
+		m.goto(k.rest)
+		return true
+	}
+	m.val = m.val2
+	m.ret()
+	return true
+}
+
+// try_caught matches the error value against the catch clause and then finishes.
+// The `try` frame is kept UNDER the match frame, so when the match body returns
+// the frame is waiting in state -3 and runs `#:finally` itself.
+fn (mut m Machine) try_caught(k vlip.Kont) ! {
+	mut cf := m.kont(.match_k)
+	cf.env = k.env
+	cf.slot = 0
+	cf.clauses = [k.expr]
+	mut k2 := k
+	k2.slot = -3
+	m.push(k2)
+	m.push(cf)
+	m.ret()
+}
+
+fn (m &Machine) empty_collection(id vlip.NodeId) vlip.Value {
+	if m.arena.node(id).tag == .table {
+		return vlip.table({})
+	}
+	return vlip.vector([]vlip.Value{})
+}
+
+// eval_collection evaluates the elements of a vector, table or array literal.
+//
+// They used to be datum-converted wholesale, so `[target (+ 1 1)]` produced
+// `[target ()]` -- the symbol stayed a symbol and a call form became an empty
+// list. Every table in the standard library was therefore built out of symbol
+// values, and `(ok {:host target})` yielded `:host target`.
+//
+// `collect_k` walks the elements left to right, so a literal costs one frame per
+// element and the last element is still in tail position.
+fn (mut m Machine) eval_collection(id vlip.NodeId) ! {
+	ekids := m.arena.kids(id)
+	if ekids.len == 0 {
+		m.val = m.empty_collection(id)
+		m.ret()
+		return
+	}
+	mut cf := m.kont(.collect_k)
+	cf.rest = id
+	cf.expr = id
+	cf.slot = 0
+	cf.acc = []vlip.Value{}
+	cf.env = m.env
+	m.push(cf)
+	m.goto(ekids[0])
+}
+
+// build_collection turns the evaluated elements of a literal into its value.
+//
+// Table keys are the exception: `:host` and `"host"` are keys, not expressions.
+// Evaluating a key would make `{:host target}` look up a variable named `host`,
+// and it would make the obvious spelling of a table unusable. Quote the table
+// instead if a key really is a variable.
+fn (mut m Machine) build_collection(id vlip.NodeId, items []vlip.Value) !vlip.Value {
+	tag := m.arena.node(id).tag
+	if tag == .vector || tag == .array {
+		return vlip.vector(items)
+	}
+	if items.len % 2 != 0 {
+		return error('a table literal needs an even number of elements, got ${items.len}')
+	}
+	mut pairs := map[string]vlip.Value{}
+	mut i := 0
+	for i + 1 < items.len {
+		key := items[i]
+		ks := match key.tag {
+			.keyword { key.as_string() }
+			.string { key.as_string() }
+			else {
+				return error('a table literal needs keyword or string keys, got ${printer.write(key)}')
+			}
+		}
+		pairs[ks] = items[i + 1]
+		i += 2
+	}
+	if tag == .buffer {
+		return vlip.buffer(pairs)
+	}
+	return vlip.table(pairs)
 }
 
 // is_destructuring reports whether a binding form's left side is a PATTERN rather

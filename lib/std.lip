@@ -24,11 +24,15 @@
 ;; parse-in reads "key: value" and returns (ok key value). It is the smallest
 ;; honest demonstration of a multi-value Result, which is what `use` exists for.
 (define (parse-in text)
-  (let assert [(string? text) text]
-    (let parts (string-split text ":")
-      (cond [(= (length parts) 2) (ok (string-trim (list-ref parts 0))
+  ;; `assert`, not `let assert`. `let assert [PATTERN VALUE] body` matches a
+  ;; PATTERN against a VALUE, and `(string? text)` binds `text` from the subject
+  ;; rather than testing the parameter -- so it never tests anything and the body
+  ;; referred to a name nothing had bound.
+  (assert (string? text) "parse-in needs a string")
+  (let parts (string-split text ":")
+    (cond [(= (length parts) 2) (ok (string-trim (list-ref parts 0))
                                     (string-trim (list-ref parts 1)))]
-            [else (err 'malformed)]))))
+          [else (err 'malformed)])))
 
 ;; ---------------------------------------------------------------- symbols
 

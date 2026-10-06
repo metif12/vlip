@@ -51,8 +51,8 @@
 ;; body at the SAME indentation level. No staircase, no early returns.
 
 (use (parse-in "key: value")
-  (print "parsed:" (ok-value k) "=" (ok-value v))
-  (print "all good"))                  ;=> parsed: key = value / all good
+  (print "parsed:" r1 "=" r2)          ;=> parsed: key = value
+  (print "all good"))                  ;=> all good
 
 ;; if any step is an error, the body is skipped entirely and the error is the
 ;; value of the whole `use` expression
