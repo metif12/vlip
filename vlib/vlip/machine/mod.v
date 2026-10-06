@@ -713,11 +713,20 @@ fn (mut m Machine) eval_list(id vlip.NodeId, kids []vlip.NodeId) ! {
 		if special_form(head.value) {
 			return m.eval_special(head.value, id, kids)
 		}
-		// `p.y := 99` is a field update, not a call. The reader cannot tell it
-		// apart from a three-element application, so the shape does: a dotted
-		// head, the marker `:=` in the second slot, and a value in the third.
-		if head.value.contains('.') && kids.len == 3 && m.is_update_marker(kids[1]) {
-			return m.eval_field_update(head.value, kids[2])
+		// A dotted head is a FIELD, not a call. `(p.x)` reads the field; `(p.y := 99)`
+		// updates it. The reader cannot tell a field read from a one-argument call,
+		// so the shape does: the marker `:=` in the second slot means update, and
+		// anything else is a read.
+		//
+		// Without the read branch, `(p.x)` as a statement fell through to the
+		// application path, the field value was evaluated and then applied, and the
+		// error was "cannot apply 1: not a function" -- with no line number, which
+		// is why it looked like it came from a `:=` several lines later.
+		if head.value.contains('.') {
+			if kids.len == 3 && m.is_update_marker(kids[1]) {
+				return m.eval_field_update(head.value, kids[2])
+			}
+			return m.eval_field_access(head.value)
 		}
 	}
 	// application: evaluate the operator with a frame that will then take the
@@ -732,6 +741,14 @@ fn (mut m Machine) eval_list(id vlip.NodeId, kids []vlip.NodeId) ! {
 
 fn (m &Machine) is_update_marker(n vlip.NodeId) bool {
 	d := m.arena.node(n)
+	// `:=` is a KEYWORD, not a symbol: the reader turns any token starting with a
+	// colon into a keyword, so `:=` arrives as a keyword whose value is `=`.
+	// Requiring a symbol here meant `(p.y := 99)` never matched, fell through to
+	// the application path, and reported "cannot apply 2: not a function" -- the
+	// field value being applied, which says nothing about `:=`.
+	if d.tag == .kw {
+		return d.value == '='
+	}
 	return d.tag == .sym && d.value == ':='
 }
 
@@ -966,14 +983,25 @@ fn (mut m Machine) step_return() !bool {
 				return true
 			}
 			frame := m.envs.new_env(k.env)
-			// parts[0] is the `ok` symbol, so the first value is parts[1] and
-			// gets the first name. The loop used to start at 1 and pass that same
-			// n to use_name, which adds one again -- every result bound to r2, r3,
-			// ... and the first result was unreachable.
-			mut idx := 0
-			for pi := 1; pi < parts.len; pi++ {
-				m.envs.define(frame, m.use_name(idx), parts[pi])
-				idx++
+			// parts[0] is the `ok` symbol, so the first value is parts[1].
+			//
+			// A single value is bound to the CALLEE's name: `(use (connect "h")
+			// ...)` binds `conn`, which is what makes the stacked form in the
+			// examples read as four flat lines. Several values have no single name
+			// to bind to, so they are positional: r1, r2, ...
+			//
+			// The loop used to start at 1 and pass that same index to use_name,
+			// which adds one again -- every result bound to r2, r3, ... and the
+			// first result was unreachable.
+			if parts.len == 2 {
+				eprintln('DBG use binding ${m.callee_name(kids[1])} = ${printer.write(parts[1])}')
+				m.envs.define(frame, m.callee_name(kids[1]), parts[1])
+			} else {
+				mut idx := 0
+				for pi := 1; pi < parts.len; pi++ {
+					m.envs.define(frame, m.use_name(idx), parts[pi])
+					idx++
+				}
 			}
 			m.enter_clause_body(frame, m.make_begin(kids[2..]))!
 			return true
@@ -1624,7 +1652,7 @@ k := m.kstack[idx]
 // ------------------------------------------------------------ special forms
 
 pub fn special_form(name string) bool {
-	return name in ['quote', 'if', 'define', 'set!', 'lambda', 'fn', 'begin', 'let', 'let*', 'letrec', 'and', 'or', 'when', 'unless', 'cond', 'case', 'loop', 'dotimes', 'use', 'match', 'match*', 'struct', 'struct-out', 'provide', 'require', 'let-assert', 'do', 'time', 'assert', '->', '->>', '|>', 'as->', 'cond->', 'def', 'defmacro', 'try']
+	return name in ['quote', 'if', 'define', 'set!', 'lambda', 'fn', 'begin', 'let', 'let*', 'letrec', 'and', 'or', 'when', 'unless', 'cond', 'case', 'loop', 'dotimes', 'use', 'match', 'match*', 'struct', 'struct-out', 'provide', 'require', 'let-assert', 'do', 'time', 'assert', '->', '->>', '|>', 'as->', 'cond->', 'def', 'defmacro', 'try', 'macex', 'macex1']
 }
 
 fn (mut m Machine) eval_special(name string, id vlip.NodeId, kids []vlip.NodeId) ! {
@@ -2586,16 +2614,22 @@ fn (mut m Machine) enter_clause_body(frame vlip.EnvId, body vlip.NodeId) ! {
 		m.goto(body)
 		return
 	}
+	// bkids INCLUDES the head symbol: `(begin A B)` has three children, begin, A,
+	// B. The forms are bkids[1..]. An earlier version compared bkids.len against
+	// the number of FORMS, so a one-form body never matched the single-form
+	// branch and the seq frame was entered at slot 1 pointing at the `begin`
+	// symbol itself -- which was then evaluated and reported "unbound
+	// identifier: begin".
 	bkids := m.arena.kids(body)
-	if bkids.len == 0 {
+	if bkids.len <= 1 {
 		m.env = frame
 		m.val = vlip.empty_list()
 		m.ret()
 		return
 	}
-	if bkids.len == 1 {
+	if bkids.len == 2 {
 		m.env = frame
-		m.goto(bkids[0])
+		m.goto(bkids[1])
 		return
 	}
 	mut nf := m.kont(.seq)
@@ -2604,7 +2638,7 @@ fn (mut m Machine) enter_clause_body(frame vlip.EnvId, body vlip.NodeId) ! {
 	nf.slot = 1
 	m.env = frame
 	m.push(nf)
-	m.goto(bkids[0])
+	m.goto(bkids[1])
 }
 
 // match* => (match (list S1 S2 ...) [((list P1 P2 ...)) body] ...).
@@ -2722,6 +2756,26 @@ fn (mut m Machine) eval_use(kids []vlip.NodeId) ! {
 	nf.clauses = kids
 	m.push(nf)
 	m.goto(kids[1])
+}
+
+// callee_name is the name `use` binds a single result to. `(use (connect "h")
+// body)` binds `conn`; `(use (f) body)` binds `f`. A form that is not a named
+// call has no name, and the caller falls back to positional names.
+fn (m &Machine) callee_name(call vlip.NodeId) string {
+	d := m.arena.node(call)
+	if d.tag == .sym {
+		return d.value
+	}
+	if d.tag == .list {
+		kids := m.arena.kids(call)
+		if kids.len > 0 {
+			h := m.arena.node(kids[0])
+			if h.tag == .sym {
+				return h.value
+			}
+		}
+	}
+	return 'r1'
 }
 
 // use_bind_names are the names `use` binds. `r1`, `r2`, ... because the whole
@@ -2876,10 +2930,14 @@ fn (mut m Machine) eval_struct(kids []vlip.NodeId) ! {
 	for i < kids.len {
 		d := m.arena.node(kids[i])
 		if d.tag == .kw {
-			if d.value == '#:mutable' {
+			// The reader has already dropped the `#` and the `:` from `#:mutable`,
+			// so the keyword's value is `mutable`. Comparing against the source
+			// spelling meant the option was never seen and `#:mutable` structs
+			// generated no mutator at all.
+			if d.value == 'mutable' {
 				mutable = true
 			}
-			if d.value == '#:opaque' {
+			if d.value == 'opaque' {
 				opaque = true
 			}
 		}
@@ -2902,7 +2960,7 @@ fn (mut m Machine) eval_struct(kids []vlip.NodeId) ! {
 	for f in fields {
 		src += '(define ${low}-${f} (fn [v] (struct-ref v (quote ${f}))))\n'
 		if mutable {
-			src += '(define set-${low}.${f}! (fn [v x] (struct-set! v (quote ${f}) x)))\n'
+			src += '(define set-${low}-${f}! (fn [v x] (struct-set! v (quote ${f}) x)))\n'
 		}
 	}
 	if opaque {

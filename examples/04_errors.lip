@@ -61,11 +61,13 @@
 ;=> (err malformed)
 
 ;; --- and it stacks: four levels, four flat lines ---
+;; `use` binds a single result to the CALLEE's name, so `(connect ...)` is
+;; visible as `connect` in the body.
 (use (connect "localhost:8080")
-  (use (authenticate conn :user "ada" :pass "s3cret")
-    (use (open-transaction conn)
-      (execute conn "INSERT ...")
-      (commit conn)))
+  (use (authenticate connect :user "ada" :pass "s3cret")
+    (use (open-transaction connect)
+      (execute connect "INSERT ...")
+      (commit connect)))
   (print "four levels, no nesting"))
 ;=> four levels, no nesting
 
@@ -75,6 +77,9 @@
 ;; =====================================================================
 ;; raise: for bugs, not for control flow
 ;; =====================================================================
+
+(struct Circle (r))
+(struct Rect (w h))
 
 (define (area shape)
   (match shape

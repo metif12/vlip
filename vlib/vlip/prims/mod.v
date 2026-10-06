@@ -749,6 +749,21 @@ fn prim_get(args []vlip.Value) !vlip.Value {
 	if args[0].tag == .table || args[0].tag == .buffer {
 		return args[0].as_table().get(need_str('get', args[1])!)
 	}
+	// A list or vector is addressed by position. `frequencies` returns a list of
+	// (key count) pairs and the examples read the count with `(get e 1)`, which
+	// only works if `get` accepts a positional key on a sequence. Without this it
+	// reported "get expects a table, got ("the" 3)".
+	if args[0].tag == .pair || args[0].tag == .emptylist || args[0].tag == .vector
+		|| args[0].tag == .array {
+		idx := need_int('get', args[1])!
+		items := seq(args[0]) or {
+			return error('get: ${err.msg()}')
+		}
+		if idx < 0 || idx >= items.len {
+			return args[2]
+		}
+		return items[idx]
+	}
 	return error('get expects a table, got ${printer.write(args[0])}')
 }
 

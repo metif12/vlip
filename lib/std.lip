@@ -19,6 +19,13 @@
 
 (define (identity x) x)
 
+;; err-message reads the message out of an `(err msg)` value. `raise` builds one
+;; and `try`'s #:catch matches against it, so this is how a handler reads what
+;; went wrong.
+(define (err-message e)
+  (assert (err? e) "err-message needs an (err ...) value")
+  (get e 1))
+
 ;; ---------------------------------------------------------------- parsing
 
 ;; parse-in reads "key: value" and returns (ok key value). It is the smallest

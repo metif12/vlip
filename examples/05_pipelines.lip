@@ -62,7 +62,7 @@
 ;; #:mutable for the rare in-place case
 (struct Counter (n) #:mutable)
 (def c (Counter 0))
-(set-c.n! c 5)
+(set-counter-n! c 5)               ; the mutator is set-STRUCTNAME-FIELD!
 (c.n)                        ;=> 5
 
 ;; --- structs are callable: a struct used in function position is a lookup ---
@@ -128,13 +128,15 @@
 ;; =====================================================================
 
 ;; Word frequency, top three. No macros. No nesting. No closures-per-element.
+;; `take` takes (coll n), so it is threaded with `->` rather than `->>`: the
+;; value has to land in the FIRST slot, and `->>` puts it in the last.
 (define (top-words text n)
-  (->> (string-split text " ")
-       (keep string-not-blank?)
-       (map string-downcase)
-       (frequencies)
-       (sort-by (fn (e) (- (get e 1))))
-       (take n)))
+  (-> (->> (string-split text " ")
+           (keep string-not-blank?)
+           (map string-downcase)
+           (frequencies)
+           (sort-by (fn (e) (- (get e 1)))))
+      (take n)))
 
 (define report
   (top-words "the quick brown fox jumps over the lazy dog the end the end" 3))
