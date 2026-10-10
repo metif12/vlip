@@ -11,7 +11,7 @@
 (function () {
   'use strict';
 
-  var KEY = 'vlip.lang';
+  var KEY = 'blip.lang';
   var root = document.querySelector('.langs');
   if (!root) return;
 
@@ -77,12 +77,12 @@
   // fight the back button and make the URL lie about what is being read.
   //
   // The root test has to be the PROJECT root, not "any path ending in a slash":
-  // /vlip/fa/ also ends in a slash. Getting that wrong is invisible until
+  // /blip/fa/ also ends in a slash. Getting that wrong is invisible until
   // something else changes, and it was only saved by the English check below.
   try {
     var saved = window.localStorage.getItem(KEY);
     var here = window.location.pathname;
-    var atRoot = /\/vlip\/?$/.test(here) || here === '/';
+    var atRoot = /\/blip\/?$/.test(here) || here === '/';
     var englishPage = document.documentElement.lang === 'en';
     if (saved && saved !== 'en' && atRoot && englishPage) {
       window.location.replace(saved + '/');

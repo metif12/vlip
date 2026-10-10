@@ -17,9 +17,9 @@ module main
 // suite is that each example stands alone.
 
 import os
-import vlib.vlip
-import vlib.vlip.host
-import vlib.vlip.machine
+import vlib.blip
+import vlib.blip.host
+import vlib.blip.machine
 
 struct Suite {
 mut:
@@ -33,7 +33,7 @@ fn (mut s Suite) fail(label string, msg string) {
 
 // run_example evaluates one file and returns everything it printed.
 //
-// The standard library is loaded first, exactly as `vlip run` does, because the
+// The standard library is loaded first, exactly as `blip run` does, because the
 // examples call parse-in and connect without defining them. The capture host
 // only serves files that have been put into it, so the library is read from
 // disk here and handed over.

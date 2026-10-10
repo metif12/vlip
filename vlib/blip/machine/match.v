@@ -1,8 +1,8 @@
 module machine
 
-import vlib.vlip
-import vlib.vlip.prims
-import vlib.vlip.reader
+import vlib.blip
+import vlib.blip.prims
+import vlib.blip.reader
 
 // Pattern matching.
 //
@@ -22,7 +22,7 @@ import vlib.vlip.reader
 pub struct Bind {
 pub:
 	name string
-	val  vlip.Value
+	val  blip.Value
 }
 
 // Matched is the result of trying one pattern against one subject.
@@ -33,7 +33,7 @@ pub:
 }
 
 // pattern_name_for gives the head of a pattern list, or '' when it is not a list.
-fn (m &Machine) pattern_head(p vlip.NodeId) string {
+fn (m &Machine) pattern_head(p blip.NodeId) string {
 	d := m.arena.node(p)
 	if d.tag != .list {
 		return ''
@@ -54,11 +54,11 @@ fn (m &Machine) pattern_head(p vlip.NodeId) string {
 // `depth` bounds the recursion. A cyclic structure matched against a recursive
 // pattern -- `(define (p (cons h t)) p)` and then matching `(cons a p)` -- would
 // otherwise run forever, and a pattern matcher's job is not to hang.
-fn (mut m Machine) match_pattern(pat vlip.NodeId, subject vlip.Value) !Matched {
+fn (mut m Machine) match_pattern(pat blip.NodeId, subject blip.Value) !Matched {
 	return m.match_at(pat, subject, 0)
 }
 
-fn (mut m Machine) match_at(pat vlip.NodeId, subject vlip.Value, depth int) !Matched {
+fn (mut m Machine) match_at(pat blip.NodeId, subject blip.Value, depth int) !Matched {
 	if depth > 40 {
 		return error('pattern nested more than 40 deep')
 	}
@@ -85,7 +85,7 @@ fn (mut m Machine) match_at(pat vlip.NodeId, subject vlip.Value, depth int) !Mat
 		}
 		.kw {
 			return Matched{
-				ok: prims.value_eq(subject, vlip.keyword(d.value))
+				ok: prims.value_eq(subject, blip.keyword(d.value))
 			}
 		}
 		.int, .float, .str, .bool, .char, .rat {
@@ -143,7 +143,7 @@ fn (mut m Machine) match_at(pat vlip.NodeId, subject vlip.Value, depth int) !Mat
 }
 
 // literal_eq compares a literal datum with a runtime value.
-fn literal_eq(d &reader.Datum, v vlip.Value) bool {
+fn literal_eq(d &reader.Datum, v blip.Value) bool {
 	return prims.value_eq(datum_literal(d), v)
 }
 
@@ -151,23 +151,23 @@ fn literal_eq(d &reader.Datum, v vlip.Value) bool {
 // reader's semantics for `quote`, and deliberately duplicating a little logic
 // rather than reaching into `assemble`, which is a method on Machine and needs a
 // whole machine to call.
-fn datum_literal(d &reader.Datum) vlip.Value {
+fn datum_literal(d &reader.Datum) blip.Value {
 	match d.tag {
-		.nil { return vlip.nil_value() }
-		.bool { return vlip.boolean(d.i != 0) }
-		.int { return vlip.integer(d.i) }
-		.float { return vlip.float(d.f) }
-		.char { return vlip.rune(u32(d.i)) }
-		.str { return vlip.string(d.value) }
-		.sym { return vlip.symbol(d.value) }
-		.kw { return vlip.keyword(d.value) }
-		else { return vlip.nil_value() }
+		.nil { return blip.nil_value() }
+		.bool { return blip.boolean(d.i != 0) }
+		.int { return blip.integer(d.i) }
+		.float { return blip.float(d.f) }
+		.char { return blip.rune(u32(d.i)) }
+		.str { return blip.string(d.value) }
+		.sym { return blip.symbol(d.value) }
+		.kw { return blip.keyword(d.value) }
+		else { return blip.nil_value() }
 	}
 }
 
 // match_list_at handles every list-shaped pattern: the named forms, the predicate
 // form, the positional form, and `cons`.
-fn (mut m Machine) match_list_at(pat vlip.NodeId, subject vlip.Value, depth int) !Matched {
+fn (mut m Machine) match_list_at(pat blip.NodeId, subject blip.Value, depth int) !Matched {
 	kids := m.arena.kids(pat)
 	if kids.len == 0 {
 		return Matched{
@@ -295,7 +295,7 @@ fn (mut m Machine) match_list_at(pat vlip.NodeId, subject vlip.Value, depth int)
 			if !pattern_predicate(head) {
 				return m.positional(kids, subject, depth)
 			}
-			mut call := []vlip.Value{}
+			mut call := []blip.Value{}
 			call << subject
 			mut i := 1
 			for i < kids.len {
@@ -315,7 +315,7 @@ fn (mut m Machine) match_list_at(pat vlip.NodeId, subject vlip.Value, depth int)
 	}
 }
 
-fn (mut m Machine) positional(kids []vlip.NodeId, subject vlip.Value, depth int) !Matched {
+fn (mut m Machine) positional(kids []blip.NodeId, subject blip.Value, depth int) !Matched {
 	return m.match_list_tail(kids, subject, depth)
 }
 
@@ -323,7 +323,7 @@ fn (mut m Machine) positional(kids []vlip.NodeId, subject vlip.Value, depth int)
 // `(a b)`. The last sub-pattern may be a binding symbol, which then takes the
 // WHOLE remaining tail rather than one element -- that is what makes
 // `(list 1 rest)` bind `rest` to `(2 3)`.
-fn (mut m Machine) match_list_tail(kids []vlip.NodeId, subject vlip.Value, depth int) !Matched {
+fn (mut m Machine) match_list_tail(kids []blip.NodeId, subject blip.Value, depth int) !Matched {
 	items := prims.seq(subject) or {
 		return Matched{
 			ok: false
@@ -334,9 +334,9 @@ fn (mut m Machine) match_list_tail(kids []vlip.NodeId, subject vlip.Value, depth
 	mut i := 0
 	for i < rest.len {
 		if i == rest.len - 1 && m.is_capturing_tail(rest[i]) {
-			mut tail := vlip.empty_list()
+			mut tail := blip.empty_list()
 			if items.len > i {
-				tail = vlip.list_from(items[i..])
+				tail = blip.list_from(items[i..])
 			}
 			sub := m.match_at(rest[i], tail, depth + 1)!
 			if !sub.ok {
@@ -368,7 +368,7 @@ fn (mut m Machine) match_list_tail(kids []vlip.NodeId, subject vlip.Value, depth
 	}
 }
 
-fn (mut m Machine) match_table_at(pat vlip.NodeId, subject vlip.Value, depth int) !Matched {
+fn (mut m Machine) match_table_at(pat blip.NodeId, subject blip.Value, depth int) !Matched {
 	if !(subject.tag in [.table, .buffer, .struct_]) {
 		return Matched{
 			ok: false
@@ -408,7 +408,7 @@ fn (mut m Machine) match_table_at(pat vlip.NodeId, subject vlip.Value, depth int
 	}
 }
 
-fn (mut m Machine) match_struct_at(pat vlip.NodeId, subject vlip.Value, depth int) !Matched {
+fn (mut m Machine) match_struct_at(pat blip.NodeId, subject blip.Value, depth int) !Matched {
 	kids := m.arena.kids(pat)
 	if kids.len < 2 {
 		return error('match: (struct Name field: p ...) needs a name and at least one field')
@@ -467,14 +467,14 @@ fn (mut m Machine) match_struct_at(pat vlip.NodeId, subject vlip.Value, depth in
 }
 
 // is_wildcard: `_`, which matches anything and binds nothing.
-fn (m &Machine) is_wildcard(n vlip.NodeId) bool {
+fn (m &Machine) is_wildcard(n blip.NodeId) bool {
 	d := m.arena.node(n)
 	return d.tag == .sym && d.value == '_'
 }
 
 // is_capturing_tail: a bare symbol in the last position of a list pattern, which
 // captures the rest of the list rather than one element.
-fn (m &Machine) is_capturing_tail(n vlip.NodeId) bool {
+fn (m &Machine) is_capturing_tail(n blip.NodeId) bool {
 	d := m.arena.node(n)
 	return d.tag == .sym && d.value != '_'
 }

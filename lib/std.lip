@@ -1,12 +1,12 @@
-;; lib/std.lip -- the vlip standard library, in vlip.
+;; lib/std.lip -- the blip standard library, in blip.
 ;;
-;; Loaded by `vlip run` and by the REPL before your program, so a program does not
+;; Loaded by `blip run` and by the REPL before your program, so a program does not
 ;; have to say `(require "std.lip")` for names everybody assumes exist. That is
 ;; the same rule every language with a prelude follows, and it is what lets the
 ;; examples in examples/ read the way they do: `(parse-in "key: value")` is a
 ;; call, not a definition the reader has to scroll past.
 ;;
-;; Everything here is ordinary vlip. There is no special form in this file, which
+;; Everything here is ordinary blip. There is no special form in this file, which
 ;; is the point: if the standard library needs a new feature, the feature is
 ;; missing rather than the library being special.
 ;;

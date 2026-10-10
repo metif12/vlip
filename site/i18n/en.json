@@ -1,5 +1,5 @@
 {
-  "site.name": "vlip",
+  "site.name": "blip",
   "site.desc": "A small Lisp dialect implemented in V, built around an explicit CEK machine with real tail calls and an embeddable core.",
 
   "nav.home": "Home",
@@ -11,7 +11,7 @@
   "ui.tryIt": "Read the docs",
   "ui.source": "Source",
   "ui.untranslated": "This section is not yet translated into your language; it is shown in English. Translations are welcome.",
-  "ui.footer": "vlip is a Lisp dialect implemented in V. Early, and honest about what does not work yet.",
+  "ui.footer": "blip is a Lisp dialect implemented in V. Early, and honest about what does not work yet.",
 
   "home.title": "A Lisp for V, with tail calls that are actually free",
   "home.sub": "A small Lisp dialect built on an explicit CEK machine. Tail calls reuse their frame instead of pushing one, so a loop is a loop and not a stack that grows until it dies.",
@@ -36,7 +36,7 @@
   "features.tco.t": "Proper tail calls",
   "features.tco.b": "A call in tail position reuses the current continuation frame instead of pushing one. Self-recursion and mutual recursion both loop in constant space.",
   "features.machine.t": "An explicit CEK machine",
-  "features.machine.b": "Control, environment, and value are separate machine fields. Recursion in the evaluator is a tail call, so the V stack cannot overflow on a vlip loop.",
+  "features.machine.b": "Control, environment, and value are separate machine fields. Recursion in the evaluator is a tail call, so the V stack cannot overflow on a blip loop.",
   "features.truthy.t": "Only #f is false",
   "features.truthy.b": "As in R5RS and Clojure: 0, the empty string, nil, and () are all true. Ruby and JavaScript say the opposite, which is why newcomers relearn this.",
   "features.forms.t": "Core and derived forms",
@@ -47,7 +47,7 @@
   "features.embed.b": "One Machine value holds everything. Two can run side by side with no interference, which is what makes embedding and testing possible.",
 
   "features.depth": "Why an explicit machine",
-  "features.depth1": "A tree-walking evaluator written as a recursive function runs out of C stack before it runs out of vlip stack. Every non-tail vlip call becomes another V frame, so the host's limit becomes your limit.",
+  "features.depth1": "A tree-walking evaluator written as a recursive function runs out of C stack before it runs out of blip stack. Every non-tail blip call becomes another V frame, so the host's limit becomes your limit.",
   "features.depth2": "Writing the evaluator as an explicit machine with its own heap stack moves that boundary somewhere you can see. The cost is a step counter and a dispatch loop. The benefit is that the numbers in the table below are measured rather than hoped for.",
 
   "features.benchTitle": "Measured",
@@ -152,7 +152,7 @@
 
   "docs.truthyTitle": "On truthiness",
   "docs.truthy1": "Only #f is false. The number zero, the empty string, nil, and the empty list are all true. This matches R5RS and Clojure, and deliberately does not match Ruby, JavaScript, or Python.",
-  "docs.truthy2": "The rule matters more than it looks. A language that treats 0 as falsey makes every numeric result a potential branch, which is why code in those languages needs explicit nil checks that vlip code does not.",
+  "docs.truthy2": "The rule matters more than it looks. A language that treats 0 as falsey makes every numeric result a potential branch, which is why code in those languages needs explicit nil checks that blip code does not.",
 
   "docs.prims": "Primitives",
   "docs.p.arith": "arithmetic",

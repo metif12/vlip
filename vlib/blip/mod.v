@@ -1,6 +1,6 @@
-module vlip
+module blip
 
-// Value is the runtime representation of every vlip datum, plus the environment
+// Value is the runtime representation of every blip datum, plus the environment
 // and closure machinery the machine needs.
 //
 // Three V facts shaped this, all found by measurement rather than by reading the
@@ -720,4 +720,33 @@ pub mut:
 // rejected rather than silently yielding 12.
 pub const strict_float = strconv.AtoF64Param{
 	allow_extra_chars: false
+}
+
+pub fn format_error(path string, src string, line int, col int, msg string, length int) string {
+	if line <= 0 {
+		return 'error: ${msg}'
+	}
+	lines := src.split('\n')
+	if line > lines.len {
+		return 'error: ${msg}'
+	}
+	mut src_line := lines[line - 1]
+	max_src := 200
+	if src_line.len > max_src {
+		src_line = src_line[..max_src] + '...'
+	}
+	ln := line.str()
+	gutter := ' '.repeat(ln.len)
+	mut out := 'error: ${msg}\n'
+	out += '  --> ${path}:${line}:${col}\n'
+	out += '${gutter} |\n'
+	out += '${ln} | ${src_line}\n'
+	out += '${gutter} | '
+	underline_col := col - 1
+	if underline_col > 0 {
+		out += ' '.repeat(underline_col)
+	}
+	out += '^'.repeat(length)
+	out += '\n'
+	return out
 }

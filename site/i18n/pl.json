@@ -8,7 +8,7 @@
   "ui.tryIt": "Czytaj dokumentację",
   "ui.source": "Kod źródłowy",
   "ui.untranslated": "Ta sekcja nie została jeszcze przetłumaczona na Twój język i jest pokazana po angielsku. Tłumaczenia są mile widziane.",
-  "ui.footer": "vlip to dialekt Lisp napisany w V. Wczesny etap i uczciwe informacje o tym, co jeszcze nie działa.",
+  "ui.footer": "blip to dialekt Lisp napisany w V. Wczesny etap i uczciwe informacje o tym, co jeszcze nie działa.",
   "home.title": "Lisp dla V, z wywołaniami ogonowymi naprawdę za darmo",
   "home.sub": "Mały dialekt Lisp na jawnej maszynie CEK. Wywołanie w pozycji ogonowej używa swojej ramki ponownie zamiast dokładać nową, więc pętla jest pętlą, a nie stosem, który rośnie, dopóki nie umrze.",
   "home.pillars": "Co to jest",

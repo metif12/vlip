@@ -1,4 +1,6 @@
-# vlip
+# blip
+
+<img src="site/assets/logo.svg" alt="blip" width="44" height="44" align="left" style="margin-right: .7rem">
 
 A Lisp dialect implemented in V, designed so that ordinary programs are written
 **without macros** — while macros remain available for the cases that genuinely
@@ -26,16 +28,27 @@ Milestone **M3** — the CEK machine runs real programs with real tail calls.
 The reader parses all six example programs; the machine evaluates closures,
 arithmetic, branching, `loop`, `dotimes`, `letrec`, `cond` and `case`.
 
+Past M3 and working: a REPL with golden tests, errors as values with
+source-context frames, real programs in `programs/` (brainfuck, json), a
+browser playground (`site/playground.html` served by `server.v`), and
+machine-generated prims (`tools/genprims.vsh`, `math-*` pilot). Recent
+changes are recorded in `CHANGELOG.md`.
+
 | | |
 |---|---|
-| `docs/000-vlip-design.md` | the design document: motivation, language, architecture, trade-offs, comparisons |
+| `docs/000-blip-design.md` | the design document: motivation, language, architecture, trade-offs, comparisons |
 | `docs/010-roadmap.md` | embedding, the REPL, the example programs to write, and the veb final phase |
-| `vlib/vlip/` | the implementation: value representation, reader, printer, machine, primitives |
+| `vlib/blip/` | the implementation: value representation, reader, printer, machine, primitives |
 | `examples/` | the six programs that define the syntax; all parse |
 | `tests/tail_calls.v` | tail-call and derived-form suite (21 passing) |
 | `tests/non_tail.v` | non-tail sibling calls, the case the environment bug hid in |
 | `tests/loop_forms.v` | `loop`, `dotimes` and `letrec` |
 | `tests/binding_forms.v` | `let`, `let*`, `letrec`, rest parameters, shadowing, no leaking |
+| `tests/embedding.v` | the machine as a value: independent machines, limits, surviving bad programs |
+| `tests/repl_golden.v` | the REPL in-process plus a stdin-to-stdout golden fixture |
+| `tests/examples_run.v` | all six examples run to their markers |
+| `tests/programs_run.v` | brainfuck and json run to their markers |
+| `tests/genprims.v` | every generated prim's value, arity, and type errors |
 
 `let*`, rest parameters and callable keywords now work, and `tests/binding_forms.v`
 covers them. The three were long misdiagnosed as one problem — "`[...]` is a vector
@@ -60,14 +73,39 @@ ok   loop => 7                      (steps=185,      kont=0)
 A stack depth of `0` at the end of a quarter-million tail calls is the whole point: the
 frame in tail position is reused rather than pushed.
 
-## Build and test
+## Install
 
 Requires V 0.5.2 (the v3-line compiler). Use `-cc gcc`: the default C backend
 fails on this checkout, and CI uses the same flag.
 
+### macOS & Linux
+
 ```sh
-v -cc gcc -o vlip.exe vlip.v                       # the CLI
-.\vlip.exe examples\01_basics.lip
+curl -fsSL https://metif12.github.io/blip/install.sh | bash
+```
+
+### Windows
+
+```powershell
+irm https://metif12.github.io/blip/install.ps1 | iex
+```
+
+### Docker
+
+```sh
+docker run --rm -it ghcr.io/metif12/blip:latest
+```
+
+### From source
+
+```sh
+git clone https://github.com/metif12/blip.git && cd blip && v -cc gcc -o blip.exe blip.v
+```
+
+## Build and test
+
+```sh
+.\blip.exe examples\01_basics.lip
 
 v -cc gcc -o tools\tail.exe tests\tail_calls.v     # the suite
 .\tools\tail.exe
@@ -112,7 +150,7 @@ Findings 1 and 2 are worth reporting upstream to the V project.
 | M4 | special forms, core forms, ~40 primitives — **in progress** |
 | M5 | macros: `defmacro`, `gensym`, quasiquote, `macex1`/`macex` |
 | M6 | modules: `require`/`provide`, `only-in`, `prefix-in`, `for-syntax` |
-| M7 | standard library written in vlip |
+| M7 | standard library written in blip |
 | M8 | ergonomics: `match`, `match*`, `use`, pipes, labelled args, `Result`, opaque types — gate: a real 300-line program with no macros |
 | M9 | tooling: REPL, span-carrying errors, formatter, `assert` as doc-tests |
 | M10 | contracts and optional erased annotations |
@@ -121,14 +159,14 @@ The embedding plan, the REPL design, the example programs worth writing, and the
 veb-backed final phase are in `docs/010-roadmap.md`. The ordering there differs
 from this table in one respect: **errors become values before macros do.** A
 panic inside an embedded interpreter unwinds through the host and kills it, so
-that has to be true before anything can call vlip from V, and certainly before
+that has to be true before anything can call blip from V, and certainly before
 Lua.
 
 Section 7 of that document is the upkeep checklist: syncing against a new V,
 re-running the representation probes, and keeping the known-broken list honest.
 The compiler sync is the one that matters most, because this project does not
 target the `0.5.2` release — it targets vlang/v master at the commit pinned in
-`.github/workflows/ci.yml`, which resolves `vlib.vlip.*` against the project's
+`.github/workflows/ci.yml`, which resolves `vlib.blip.*` against the project's
 own modules where the release build resolves it against V's standard library.
 
 ## Branches and releases
@@ -140,7 +178,7 @@ own modules where the release build resolves it against V's standard library.
 | `<topic>` | a branch off `dev` |
 
 `master` moves only when a milestone's gate is met, so it stays something a
-person can depend on. `release.yml` verifies on the tag — the same three suites a
+person can depend on. `release.yml` verifies on the tag — the same nine suites a
 contributor runs locally — and builds the binaries and the generated site. A
 manual run of that workflow builds and verifies but does not publish, so a dry
 run cannot create a release by accident.
@@ -148,13 +186,13 @@ run cannot create a release by accident.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: branch off `dev`, use
-`-cc gcc`, keep all three suites at zero `FAIL` lines, and never hand-edit the
+`-cc gcc`, keep all nine suites at zero `FAIL` lines, and never hand-edit the
 website — it is generated by `tools/sitegen.v` from the page structure in V and
 the strings in `site/i18n/*.json`.
 
 ## The website
 
-Generated, sixteen languages, at **https://metif12.github.io/vlip/**.
+Generated, sixteen languages, at **https://metif12.github.io/blip/**.
 
 ## Design notes worth knowing
 
@@ -165,7 +203,7 @@ Generated, sixteen languages, at **https://metif12.github.io/vlip/**.
 - **`v -warn-about-allocs` and `-prealloc` arenas** are used from the start; V
   documents the latter as intended for compilers.
 - **No generics.** V's own compiler skips monomorphization when building itself
-  (`vlib/v/pref/pref.v:57`) for build speed; vlip does the same.
+  (`vlib/v/pref/pref.v:57`) for build speed; blip does the same.
 - **The benchmark harness is not yet trustworthy.** It produced three wrong
   numbers before being fixed, including a 1000x unit error from coercing a
   `time.Duration` into nanoseconds. Treat its output as provisional.

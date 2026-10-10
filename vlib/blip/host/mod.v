@@ -1,6 +1,6 @@
 module host
 
-// Host is everything vlip needs from the world outside itself.
+// Host is everything blip needs from the world outside itself.
 //
 // It exists because "print to stdout" is the one thing that stops an interpreter
 // being embeddable. A host that wants the program's output has no way to take it,

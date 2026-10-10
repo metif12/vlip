@@ -1,6 +1,6 @@
 module main
 
-// M0 gate: which `Value` layout does vlip use?
+// M0 gate: which `Value` layout does blip use?
 //
 // The design doc framed this as "boxed sum type vs packed tagged struct vs raw
 // union, measure and decide". Measurement turned out to be beside the point:
@@ -43,7 +43,7 @@ module main
 //    just the packed struct with extra `unsafe` on every member read (V also
 //    makes union fields immutable and requires unsafe to read any of them).
 //
-// B) PACKED TAGGED STRUCT -- chosen, by elimination. src/vlip/value.v.
+// B) PACKED TAGGED STRUCT -- chosen, by elimination. src/blip/value.v.
 //
 // What is left worth measuring is B against the other idiomatic V option for a
 // dynamic value: an interface. So that is what this benchmarks.
@@ -54,12 +54,12 @@ module main
 // Run:  v -prod -o bench_value.exe src/bench_value.v && bench_value.exe
 
 import time
-import vlip
+import blip
 
 const n = 1_000_000
 
 fn main() {
-	println('vlip M0 -- Value representation gate')
+	println('blip M0 -- Value representation gate')
 	println('A boxed sum type: EXCLUDED (cannot init recursive pair / cannot init field from local)')
 	println('C raw V union:    EXCLUDED (cannot hold tag and payload in one value)')
 	println('')
@@ -99,17 +99,17 @@ fn bench(label string, f fn () i64) i64 {
 // and produced an impossible 20-hour "runtime" for a 1M-iteration loop.
 
 // ---- B: packed tagged struct -----------------------------------------------
-// src/vlip/value.v. Scalars inline in typed fields; heap payloads behind a
+// src/blip/value.v. Scalars inline in typed fields; heap payloads behind a
 // voidptr. 32 bytes for any datum.
 
 fn workload_packed() i64 {
-	mut sum := vlip.integer(0)
+	mut sum := blip.integer(0)
 	for i in 0 .. n {
 		sum.i += i64(i)
 	}
-	mut lst := vlip.nil()
+	mut lst := blip.nil()
 	for i in 0 .. n {
-		lst = vlip.cons(vlip.integer(i64(i)), lst)
+		lst = blip.cons(blip.integer(i64(i)), lst)
 	}
 	mut s := i64(0)
 	mut cur := lst
@@ -121,7 +121,7 @@ fn workload_packed() i64 {
 	}
 	mut k := 0
 	for i in 0 .. n {
-		if vlip.integer(i64(i)).truthy() {
+		if blip.integer(i64(i)).truthy() {
 			k++
 		}
 	}

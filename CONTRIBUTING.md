@@ -1,9 +1,9 @@
-# Contributing to vlip
+# Contributing to blip
 
 Thanks for looking. This file is short on ceremony and specific about the things
 that will otherwise waste your afternoon.
 
-vlip is early. The reader and the machine run real programs, tail calls are
+blip is early. The reader and the machine run real programs, tail calls are
 real, and the six programs in `examples/` are the specification the interpreter
 is written against. Three documented things do not work yet, and they are named
 in the README, in `tests/tail_calls.v`, and in `docs/010-roadmap.md` rather than
@@ -33,7 +33,7 @@ every half-finished interpreter is the thing people install.
 
 Requires V 0.5.2, specifically **vlang/v master at the commit pinned in
 `.github/workflows/ci.yml`**. That is not pedantry — the `0.5.2` release build
-resolves `vlib.vlip.*` against V's own standard library and reports every module
+resolves `vlib.blip.*` against V's own standard library and reports every module
 in this repository as an unknown function, for files that exist and compile
 locally. See section 7.1a of `docs/010-roadmap.md`.
 
@@ -49,8 +49,8 @@ Always pass `-cc gcc`. The default C backend fails on this checkout, and CI uses
 the same flag so the two cannot drift apart.
 
 ```sh
-v -cc gcc -o vlip.exe vlip.v                  # the CLI
-.\vlip.exe examples\01_basics.lip
+v -cc gcc -o blip.exe blip.v                  # the CLI
+.\blip.exe examples\01_basics.lip
 
 v -cc gcc -o tools\tail.exe tests\tail_calls.v && .\tools\tail.exe
 v -cc gcc -o tools\nt.exe   tests\non_tail.v   && .\tools\nt.exe
@@ -60,10 +60,9 @@ v -cc gcc -o reader_probe.exe reader_probe.v
 .\reader_probe.exe examples\*.lip
 ```
 
-All three suites must print no `FAIL` line and the reader probe must report zero
+All nine suites must print no `FAIL` line and the reader probe must report zero
 diagnostics. The runners do not set a non-zero exit code yet, which is why CI
-greps for `FAIL` — see the roadmap. Turning `panic` into a returned error is the
-first item on the list and will fix that properly.
+greps for `FAIL`.
 
 ## Adding to the interpreter
 

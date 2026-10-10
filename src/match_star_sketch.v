@@ -1,4 +1,4 @@
-// Would vlip's `match*` actually work? A design that cannot implement its own
+// Would blip's `match*` actually work? A design that cannot implement its own
 // headline feature is not a design.
 //
 // match* is a macro over `match` + quasiquote, desugaring through temporaries.
@@ -33,7 +33,7 @@ module main
 //  5. Temporaries must be hygienic: two expansions of match* in one body cannot
 //     collide. This is precisely what Steel gets wrong (issue #706: nested
 //     syntax-rules templates with ellipsis produce (3 3 3) instead of (1 2 3)).
-//     vlip v1 macros are unhygienic, so match* internals MUST use gensym and
+//     blip v1 macros are unhygienic, so match* internals MUST use gensym and
 //     MUST NOT be reachable from user code.
 
 fn main() {

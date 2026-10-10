@@ -8,7 +8,7 @@
   "ui.tryIt": "Dokumentation lesen",
   "ui.source": "Quelltext",
   "ui.untranslated": "Dieser Abschnitt ist noch nicht in Ihre Sprache uebersetzt und wird auf Englisch gezeigt. Uebersetzungen sind willkommen.",
-  "ui.footer": "vlip ist ein in V geschriebener Lisp-Dialekt. Frueh, und ehrlich darueber, was noch nicht funktioniert.",
+  "ui.footer": "blip ist ein in V geschriebener Lisp-Dialekt. Frueh, und ehrlich darueber, was noch nicht funktioniert.",
   "home.title": "Ein Lisp fuer V, mit Tail Calls, die wirklich kostenlos sind",
   "home.sub": "Ein kleiner Lisp-Dialekt auf einer expliziten CEK-Maschine. Ein Aufruf in Tail-Position verwendet seinen Frame erneut, statt einen neuen zu stapeln: eine Schleife ist eine Schleife und kein Stapel, der wächst, bis er stirbt.",
   "home.pillars": "Was es ist",

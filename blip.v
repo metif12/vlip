@@ -1,25 +1,26 @@
 module main
 
-// vlip: run a .lip file, or start a REPL.
+// blip: run a .lip file, or start a REPL.
 //
-//   vlip                 a REPL
-//   vlip repl            the same REPL, for symmetry with `run`
-//   vlip run file.lip    evaluate a file
-//   vlip run a.lip b.lip evaluate several, in order, in one machine
-//   vlip file.lip        shorthand for `vlip run file.lip`
-//   vlip test file.lip   evaluate and check the `;=>` expectations in comments
+//   blip                 a REPL
+//   blip repl            the same REPL, for symmetry with `run`
+//   blip run file.lip    evaluate a file
+//   blip run a.lip b.lip evaluate several, in order, in one machine
+//   blip file.lip        shorthand for `blip run file.lip`
+//   blip test file.lip   evaluate and check the `;=>` expectations in comments
 //
 // No arguments starts a REPL because the CLI already requires a file for
 // anything else, so the default costs nothing and is the thing a person wants
 // most often once the language is installed.
 
 import os
-import vlib.vlip
-import vlib.vlip.host
-import vlib.vlip.machine
-import vlib.vlip.printer
-import vlib.vlip.reader
-import vlib.vlip.repl
+import vlib.blip
+import vlib.blip.host
+import vlib.blip.lsp
+import vlib.blip.machine
+import vlib.blip.printer
+import vlib.blip.reader
+import vlib.blip.repl
 
 // exit_code ends the process with a status. This V version has no os.exit; the
 // exit function is a builtin, but it is shadowed here so the intent is clear at
@@ -29,12 +30,12 @@ fn exit_code(code int) {
 }
 
 fn usage() {
-	eprintln('usage: vlip | vlip repl | vlip run <file.lip> ... | vlip file.lip')
+	eprintln('usage: blip | blip repl | blip run <file.lip> ... | blip file.lip | blip lsp')
 }
 
 // run_files evaluates files IN ORDER IN ONE MACHINE.
 //
-// One machine, not one per file, is the difference between `vlip run prelude.lip
+// One machine, not one per file, is the difference between `blip run prelude.lip
 // program.lip` working and reporting that everything the first file defined is
 // unbound in the second.
 
@@ -68,24 +69,19 @@ fn run_files(paths []string) int {
 	std := std_path()
 	if std != '' {
 		m.load(std) or {
-			eprintln('vlip: cannot load the standard library: ${err.msg()}')
+			eprintln('blip: cannot load the standard library: ${err.msg()}')
 			code = 1
 		}
 	}
 	for path in paths {
 		src := os.read_file(path) or {
-			eprintln('vlip: cannot read ${path}')
+			eprintln('blip: cannot read ${path}')
 			code = 1
 			continue
 		}
-		// run_str reads into the MACHINE's arena, which is the only arena the
-		// machine can evaluate a NodeId from. Reading into a fresh one per file
-		// and handing the forms over is the shape this code had first, and it
-		// read arbitrary memory without crashing -- the run above returned 0 for
-		// every file.
 		m.source = path
 		m.run_str(src) or {
-			eprintln('vlip: ${path}: ${err.msg()}')
+			eprintln(err.msg())
 			code = 1
 		}
 	}
@@ -97,28 +93,28 @@ fn run_files(paths []string) int {
 // run to completion".
 fn test_file(path string) int {
 	src := os.read_file(path) or {
-		eprintln('vlip: cannot read ${path}')
+		eprintln('blip: cannot read ${path}')
 		return 1
 	}
 	h := &host.ConsoleHost{}
 	mut m := machine.new_standalone(h)
 	m.source = path
 	m.run_str(src) or {
-		eprintln('vlip: ${path}: ${err.msg()}')
+		eprintln(err.msg())
 		return 1
 	}
 	return 0
 }
 
 // start_repl builds a REPL with the standard library already in it. The two ways
-// to start one -- bare `vlip` and `vlip repl` -- share it, so the two cannot end
+// to start one -- bare `blip` and `blip repl` -- share it, so the two cannot end
 // up with different definitions.
 fn start_repl() int {
 	mut r := repl.new(&host.ConsoleHost{})
 	std := std_path()
 	if std != '' {
 		r.machine.load(std) or {
-			eprintln('vlip: cannot load the standard library: ${err.msg()}')
+			eprintln('blip: cannot load the standard library: ${err.msg()}')
 		}
 	}
 	return r.run()
@@ -135,14 +131,17 @@ fn main() {
 		}
 		'run' {
 			if args.len < 2 {
-				eprintln('vlip: run needs a file')
+				eprintln('blip: run needs a file')
 				exit_code(2)
 			}
 			exit_code(run_files(args[1..]))
 		}
+		'lsp' {
+			lsp.serve()
+		}
 		'test' {
 			if args.len < 2 {
-				eprintln('vlip: test needs a file')
+				eprintln('blip: test needs a file')
 				exit_code(2)
 			}
 			mut code := 0
@@ -157,7 +156,7 @@ fn main() {
 			usage()
 		}
 		else {
-			// Allow `vlip file.lip` as a shorthand for `vlip run file.lip`.
+			// Allow `blip file.lip` as a shorthand for `blip run file.lip`.
 			exit_code(run_files(args))
 		}
 	}

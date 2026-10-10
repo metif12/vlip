@@ -3,11 +3,11 @@ module main
 /*
  * The embedding gate.
  *
- * The claim being tested is that a vlip machine is a value: two of them can exist
+ * The claim being tested is that a blip machine is a value: two of them can exist
  * at once, in one process, and neither can see or damage the other. That is what
  * separates an interpreter from a program that happens to have a library-shaped
  * API. It is also what makes every other test here possible -- the REPL golden
- * test, the `,l` load command, and eventually a vlip program driving another
+ * test, the `,l` load command, and eventually a blip program driving another
  * machine.
  *
  * The interesting failure modes are all silent, so each one is provoked on
@@ -26,10 +26,10 @@ module main
  * half this file until it was noticed.
  */
 
-import vlib.vlip
-import vlib.vlip.host
-import vlib.vlip.machine
-import vlib.vlip.printer
+import vlib.blip
+import vlib.blip.host
+import vlib.blip.machine
+import vlib.blip.printer
 
 struct Suite {
 mut:
@@ -64,7 +64,7 @@ fn pair() (&machine.Machine, &machine.Machine, &host.CaptureHost, &host.CaptureH
 	return a, b, ha, hb
 }
 
-fn text(v vlip.Value) string {
+fn text(v blip.Value) string {
 	return printer.write(v)
 }
 
@@ -75,7 +75,7 @@ fn text(v vlip.Value) string {
 // `s.fail` inside it reports the failure of the thing that was supposed to fail.
 // The first version of the bad-program check said exactly that, and it "failed"
 // on correct behaviour.
-fn fails(f fn () !vlip.Value) bool {
+fn fails(f fn () !blip.Value) bool {
 	f() or {
 		return true
 	}
@@ -94,8 +94,8 @@ fn (mut s Suite) two_machines_are_independent() bool {
 		s.fail('two machines are independent', 'b: ${err.msg()}')
 		return false
 	}
-	va := a.run_str('(f)') or { vlip.nil_value() }
-	vb := b.run_str('(f)') or { vlip.nil_value() }
+	va := a.run_str('(f)') or { blip.nil_value() }
+	vb := b.run_str('(f)') or { blip.nil_value() }
 	return s.record('two machines are independent', text(va) == '1' && text(vb) == '20',
 		'a(f)=1 b(f)=20', 'a(f)=${text(va)} b(f)=${text(vb)}')
 }
@@ -106,7 +106,7 @@ fn (mut s Suite) a_definition_does_not_cross_machines() bool {
 		s.fail('a definition does not cross machines', 'setup: ${err.msg()}')
 		return false
 	}
-	va := a.run_str('only-in-a') or { vlip.nil_value() }
+	va := a.run_str('only-in-a') or { blip.nil_value() }
 	if text(va) != '1' {
 		s.fail('a definition does not cross machines', 'the defining machine lost it')
 		return false
@@ -183,7 +183,7 @@ fn (mut s Suite) load_evaluates_into_the_running_machine() bool {
 		s.fail('load evaluates into the running machine', err.msg())
 		return false
 	}
-	before := m.run_str('before') or { vlip.nil_value() }
+	before := m.run_str('before') or { blip.nil_value() }
 	return s.record('load evaluates into the running machine', text(got) == '42' && text(before) == '1',
 		'value 42 from the file, and a definition from before the load survives',
 		'loaded-fn=${text(got)} before=${text(before)}')
@@ -241,7 +241,7 @@ fn (mut s Suite) a_step_limit_is_per_machine() bool {
 			s.fail('a step limit is per machine', 'the other machine inherited it')
 			return false
 		}
-		ok := b.run_str('(+ 1 2)') or { vlip.nil_value() }
+		ok := b.run_str('(+ 1 2)') or { blip.nil_value() }
 		return s.record('a step limit is per machine', text(ok) == '3',
 			'the bounded machine stopped, the other still works', 'got ${text(ok)}')
 	}
@@ -258,10 +258,10 @@ fn (mut s Suite) a_machine_survives_a_bad_program() bool {
 	// Two failures in a row. The first is the interesting one: it aborts with
 	// continuation frames still on the stack, and if those frames were left there
 	// the SECOND evaluation would return into them instead of finishing.
-	bad1 := fn [m] () !vlip.Value {
+	bad1 := fn [m] () !blip.Value {
 		return m.run_str('(car 1)')
 	}
-	bad2 := fn [m] () !vlip.Value {
+	bad2 := fn [m] () !blip.Value {
 		return m.run_str('(car 1)')
 	}
 	if !fails(bad1) || !fails(bad2) {

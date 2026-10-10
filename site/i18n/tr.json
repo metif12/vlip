@@ -8,7 +8,7 @@
   "ui.tryIt": "Belgeleri oku",
   "ui.source": "Kaynak kod",
   "ui.untranslated": "Bu bölüm henüz dilinize çevrilmedi ve İngilizce gösteriliyor. Çeviriler memnuniyetle karşılanır.",
-  "ui.footer": "vlip, V ile yazılmış bir Lisp lehçesidir. Erken aşamada ve henüz çalışmayan şeyleri dürüstçe söylüyor.",
+  "ui.footer": "blip, V ile yazılmış bir Lisp lehçesidir. Erken aşamada ve henüz çalışmayan şeyleri dürüstçe söylüyor.",
   "home.title": "V için bir Lisp, kuyruk çağrıları gerçekten bedava",
   "home.sub": "Açık bir CEK makinesi üzerinde küçük bir Lisp lehçesi. Kuyruk konumundaki bir çağrı yeni bir çerçeve yığmak yerine kendi çerçevesini yeniden kullanır; böylece döngü bir döngüdür, ölene kadar büyüyen bir yığın değil.",
   "home.pillars": "Neyi bu",

@@ -1,8 +1,8 @@
-;; programs/brainfuck.lip -- a Brainfuck interpreter in vlip.
+;; programs/brainfuck.lip -- a Brainfuck interpreter in blip.
 ;;
 ;; This is the smallest program that requires the interpreter to drive another
 ;; machine: the Brainfuck tape is a vector, the program is a string, and the
-;; interpreter is a recursive function over both. If vlip can run this, it can
+;; interpreter is a recursive function over both. If blip can run this, it can
 ;; be embedded.
 ;;
 ;; The tape is a vector of 30000 cells, each a byte. The program is a string.
@@ -12,12 +12,10 @@
 
 ;; Create a zero-filled tape of `n` cells.
 (define (make-tape n)
-  (make-tape-loop n (vector)))
-
-(define (make-tape-loop i acc)
-  (if (= i 0)
-    acc
-    (make-tape-loop (- i 1) (vector-append acc (vector 0)))))
+  (let tape (vector)
+    (dotimes i n
+      (array-push! tape 0))
+    tape))
 
 ;; Find the matching `]` for a `[` at position `start`.
 (define (bf-find-close program start)

@@ -5,7 +5,7 @@
 ;;   raise   -- for invariant violations, i.e. bugs. Aborts.
 ;;
 ;; Gleam proved Result alone is unusable past three levels; Janet proved fibers
-;; alone suffice for everything. vlip ships Result plus `use` now, and fibers
+;; alone suffice for everything. blip ships Result plus `use` now, and fibers
 ;; later, without changing the surface syntax.
 
 ;; --- constructing results ---
@@ -59,6 +59,19 @@
 (use (parse-in "garbage")
   (print "never reached"))             ; nothing printed
 ;=> (err malformed)
+
+;; --- a single-form body is still one form ---
+;; Below, the body is the CALL `(+ 1 2)`, not the sequence `1, 2`: it answers
+;; 3. And a `let` there binds rather than reporting its own name unbound.
+;; Clause bodies used to assume `begin`, so every bare list body was
+;; destructured into a sequence of its pieces.
+(assert (= (use (parse-in "key: value") (+ 1 2)) 3)
+  "a single-form use body is one form")
+(assert (= (use (parse-in "key: value")
+             (let both (string-append r1 "=" r2)
+               both))
+           "key=value")
+  "a let binds inside a single-form use body")
 
 ;; --- and it stacks: four levels, four flat lines ---
 ;; `use` binds a single result to the CALLEE's name, so `(connect ...)` is

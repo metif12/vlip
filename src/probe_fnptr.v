@@ -1,7 +1,7 @@
 module main
 
 import time
-import vlip
+import blip
 
 const n = 1_000_000
 
@@ -10,9 +10,9 @@ const n = 1_000_000
 // closures in Values, so every primitive call goes through a function pointer.
 
 fn work() i64 {
-	mut lst := vlip.nil()
+	mut lst := blip.nil()
 	for i in 0 .. n {
-		lst = vlip.cons(vlip.integer(i64(i)), lst)
+		lst = blip.cons(blip.integer(i64(i)), lst)
 	}
 	mut sum := i64(0)
 	mut cur := lst

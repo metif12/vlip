@@ -1,10 +1,10 @@
-- Topic Name: `vlip`
+- Topic Name: `blip`
 - Start Date: 2026-10-04
 - Status: Draft (not an official V RFC — see "Placement")
 
 # Summary
 
-**vlip** is a Lisp dialect implemented in V, designed so that ordinary programs
+**blip** is a Lisp dialect implemented in V, designed so that ordinary programs
 are written *without macros*, while macros remain available for the cases that
 genuinely need them.
 
@@ -288,11 +288,11 @@ Untyped code pays nothing. Two opt-in layers exist:
   (->/c even?)                    ; Racket-style, checked on call
   (/ x 2))
 
-(define (add (x int) (y int)) int  ; erased annotation, checked by `vlip check`
+(define (add (x int) (y int)) int  ; erased annotation, checked by `blip check`
   (+ x y))
 ```
 
-The annotation is erased before execution. `vlip check` is a separate command
+The annotation is erased before execution. `blip check` is a separate command
 that reports mismatches; running the program never does.
 
 ## Modules
@@ -475,11 +475,11 @@ The machine keeps its stack in a plain `[]Value` and its control state in
 
 1. **Fibers become free later.** Because the stack is an ordinary heap array,
    capturing it to make a fiber requires no representation change and no new
-   calling convention. This is the entire basis on which vlip can grow fibers
+   calling convention. This is the entire basis on which blip can grow fibers
    without a redesign.
 2. **No serializer, no codegen, no versioning.** There is no bytecode format to
    version, no instruction encoder to be correct, and no
-   "disassemble the bytecode" debugging story. `vlip ast` prints the
+   "disassemble the bytecode" debugging story. `blip ast` prints the
    `Program` IR and that is genuinely the whole program.
 3. **Proper tail calls are structural.** A tail call is a loop iteration, not a
    stack mutation. Steel needed a dedicated `TCOJMP` opcode and still ships
@@ -508,7 +508,7 @@ memory themselves.
 Two decisions carried over from V's own compiler:
 
 - **No generics.** `vlib/v/pref/pref.v:57` skips monomorphization when building
-  V itself. vlip does the same. This keeps rebuild times low and avoids V's
+  V itself. blip does the same. This keeps rebuild times low and avoids V's
   known-lossy parallel monomorphizer (`driver.v`, `should_parallel_monomorphize`,
   which is off by default precisely because it drops results).
 - **No macros in the host language.** V has neither macros nor `@[vgen]`. The
@@ -523,11 +523,11 @@ inspection. This is Janet's documented position: its manual walks through
 caller's `x`), `max3` (`gensym`), and `max4` (`with-syms`), then states plainly
 that "programmer diligence is required."
 
-vlip makes those exact failures **tests**, including the `max2` capture bug, so
+blip makes those exact failures **tests**, including the `max2` capture bug, so
 the sharp edge is demonstrated rather than described.
 
 `syntax-case` and `syntax` objects are deferred. When added they are opt-in per
-macro, not per program. This is the one place vlip knowingly starts weaker than
+macro, not per program. This is the one place blip knowingly starts weaker than
 Racket, on the grounds that a macro language nobody can learn is worse than one
 whose footguns are documented.
 
@@ -549,13 +549,13 @@ Each of these is a real idea that is nonetheless wrong for a first version.
   and tail calls are the answer, not a bigger stack.
 - **Infix.** SRFI-105 curly infix is a fine idea and an unnecessary one. It
   costs a reader mode and buys nothing a `match` or a good macro cannot.
-- **A self-hosted compiler.** Writing the standard library in vlip proves the
+- **A self-hosted compiler.** Writing the standard library in blip proves the
   language works. Compiling the compiler in itself is a later project, not a
   prerequisite, and Liu's L0 demonstrates the trick is available when wanted.
 
 # Drawbacks
 
-- **No static types in v1.** Optional annotations plus `vlip check` is a real
+- **No static types in v1.** Optional annotations plus `blip check` is a real
   answer, and it is a worse answer than Gleam's for programs that want the
   compiler to catch their mistakes. Programs that want that should use Gleam.
 - **Slower than a mature bytecode VM** on tight loops, accepted in exchange for
@@ -578,7 +578,7 @@ Each of these is a real idea that is nonetheless wrong for a first version.
 
 **Why a Lisp at all, in 2026?** Because the surface is the cheapest possible
 notation for the part of programming that is about transformation, and a
-language that is pleasant to *transform* is pleasant to embed. vlip is aimed
+language that is pleasant to *transform* is pleasant to embed. blip is aimed
 first at being embedded in V applications as a configuration and scripting
 layer, which is the position Janet occupies well and the one Steel's embedding
 complaints (#413, #425, #692) show is underserved.
@@ -612,7 +612,7 @@ does.
 **Why not just use Gleam?** Because Gleam has no macros, no exceptions, and no
 `eval` — a deliberate, coherent choice for a statically typed language with a
 compiler to back it up. A dynamic language that bans exceptions and has no type
-checker just produces runtime panics with no exhaustiveness safety net. vlip
+checker just produces runtime panics with no exhaustiveness safety net. blip
 takes Gleam's *ergonomics* (`use`, labelled arguments, `Result` naming, opaque
 types, `|>`) and none of its *prohibitions*.
 
@@ -633,7 +633,7 @@ adopted and one not:
 
 - *Adopted:* the last-use move optimization (`MOVEREADLOCAL`) — moving a
   refcounted local on its final use instead of copying it — which Steel reports
-  as taking a 100k-element list reverse from 123 ms to 23 ms. vlip takes the
+  as taking a 100k-element list reverse from 123 ms to 23 ms. blip takes the
   idea and implements it later, once benchmarks justify it.
 - *Adopted:* Racket-style `require`/`provide` with `only-in`, `prefix-in`, and
   `for-syntax`.
@@ -642,7 +642,7 @@ adopted and one not:
 **Racket** contributes `match*` and atomic multi-subject matching, `syntax-case`
 and syntax objects, higher-order contracts, and the module system shape. Its
 documented warning that match may re-evaluate subexpressions is adopted
-verbatim into the vlip manual.
+verbatim into the blip manual.
 
 **Janet** contributes fibers, PEGs as a data-structure DSL, callable tables and
 structs, the `@` mutable-collection prefix, table prototypes, the module system
@@ -712,7 +712,7 @@ differences are in everything else.
 **Top three word frequencies.**
 
 ```scheme
-;; vlip
+;; blip
 (define (top-words text n)
   (->> (string-split text " ")
        (keep string-not-blank?)
@@ -768,10 +768,10 @@ pub fn top_words(text: String, n: Int) -> List(#(String, Int)) {
 }
 ```
 
-**The case vlip is actually for: two values, destructured once.**
+**The case blip is actually for: two values, destructured once.**
 
 ```scheme
-;; vlip — one match, one clause list
+;; blip — one match, one clause list
 (match* (list (fetch key) (validate key))
   [(val nil)  (ok val)]
   [(nil _)    (err 'no-such-key)]
@@ -802,7 +802,7 @@ case fetch(key) {
 **Reading a tagged result.**
 
 ```scheme
-;; vlip
+;; blip
 (define (greet env)
   (match* (lookup-env env "USER")
     [(and s (not= s "")) s]
@@ -824,7 +824,7 @@ case fetch(key) {
 **Callbacks without nesting.**
 
 ```scheme
-;; vlip
+;; blip
 (use (with-open "data.csv")
   (csv-read it)
   (rows count))
@@ -846,7 +846,7 @@ case fetch(key) {
 
 ## Appendix B: feature comparison
 
-| | **vlip** | Steel | Gleam | Janet | Racket | Clojure | Hy | Fennel |
+| | **blip** | Steel | Gleam | Janet | Racket | Clojure | Hy | Fennel |
 |---|---|---|---|---|---|---|---|---|
 | Host | V | Rust | BEAM | C | Racket/C | JVM | Python | Lua |
 | Typing | optional, erased | **none** | full, static | none | optional | optional | dynamic | dynamic |
@@ -866,9 +866,9 @@ case fetch(key) {
 | Numeric operators split | no | no | **`+.` vs `+`** | no | no | no | no | no |
 
 Rows marked **bold** are the ones where the language is the reference
-implementation, and rows where vlip is best are the point of the exercise.
+implementation, and rows where blip is best are the point of the exercise.
 
-## Appendix C: what vlip borrows, and from where
+## Appendix C: what blip borrows, and from where
 
 | Idea | From | Milestone |
 |---|---|---|

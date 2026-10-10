@@ -23,14 +23,14 @@ module machine
 // free rather than needing it re-implemented per form.
 //
 // Kont is one tagged struct rather than a sum type, because V 0.5.2 cannot
-// initialise a sum-type variant field from a local. See vlib/vlip/mod.v.
+// initialise a sum-type variant field from a local. See vlib/blip/mod.v.
 
 import strconv
-import vlib.vlip
-import vlib.vlip.host
-import vlib.vlip.prims
-import vlib.vlip.printer
-import vlib.vlip.reader
+import vlib.blip
+import vlib.blip.host
+import vlib.blip.prims
+import vlib.blip.printer
+import vlib.blip.reader
 
 @[flag]
 enum Ctl {
@@ -47,18 +47,18 @@ enum Ctl {
 pub struct Machine {
 pub mut:
 	arena     &reader.Arena
-	kstack    []vlip.Kont
-	globals   vlip.EnvId
-	envs      vlip.EnvArena
-	prims     map[string]vlip.PrimFn
+	kstack    []blip.Kont
+	globals   blip.EnvId
+	envs      blip.EnvArena
+	prims     map[string]blip.PrimFn
 	ctl       Ctl = .eval_form
-	form      vlip.NodeId
-	env       vlip.EnvId
-	val       vlip.Value
+	form      blip.NodeId
+	env       blip.EnvId
+	val       blip.Value
 	// val2 holds the value a `try` is going to return while its #:finally runs.
 	// One slot, not a stack: `#:finally` runs once and its own body does not
 	// touch val2.
-	val2      vlip.Value
+	val2      blip.Value
 	steps     int
 	max_steps int = 100_000_000
 	max_kont  int = 4_000_000
@@ -70,6 +70,9 @@ pub mut:
 	// no indication of which of forty definitions introduced x is unusable.
 	// `require` also resolves relative paths against it.
 	source string
+	// src_text is the source code being evaluated, kept so an error can show the
+	// surrounding lines. Set by run_str and load before evaluation begins.
+	src_text string
 	// loaded is the set of module paths this machine has already evaluated.
 	loaded []string
 	// macros names the procedures defmacro created, so macex can tell a macro from
@@ -91,10 +94,10 @@ pub fn new_machine_with(a &reader.Arena, h host.Host) &Machine {
 	mut m := unsafe {
 		&Machine{
 			arena:   a
-			kstack:  []vlip.Kont{}
-			envs:    vlip.EnvArena{}
-			globals: vlip.no_env
-			env:     vlip.no_env
+			kstack:  []blip.Kont{}
+			envs:    blip.EnvArena{}
+			globals: blip.no_env
+			env:     blip.no_env
 			prims:   prims.table()
 			host:    h
 		}
@@ -102,7 +105,7 @@ pub fn new_machine_with(a &reader.Arena, h host.Host) &Machine {
 	// The global environment must be a real frame, not `no_env`: `no_env` is the
 	// null env, and a `define` into it dereferences nil. Getting this wrong
 	// crashes on the first `(define ...)` with no diagnostic.
-	m.globals = m.envs.new_env(vlip.no_env)
+	m.globals = m.envs.new_env(blip.no_env)
 	m.env = m.globals
 	return m
 }
@@ -134,16 +137,16 @@ pub fn new_standalone(h host.Host) &Machine {
 // `quasi_to_value` saves and restores the same fields by hand, because it calls
 // eval_one from the MIDDLE of an evaluation and must not clear what it is in.
 fn (mut m Machine) reset() {
-	m.kstack = []vlip.Kont{}
+	m.kstack = []blip.Kont{}
 	m.ctl = .eval_form
 	m.env = m.globals
-	m.form = vlip.no_node
-	m.val = vlip.nil_value()
+	m.form = blip.no_node
+	m.val = blip.nil_value()
 }
 
 // run evaluates top-level forms in order and returns the last value.
-pub fn (mut m Machine) run(forms []vlip.NodeId) !vlip.Value {
-	mut last := vlip.nil_value()
+pub fn (mut m Machine) run(forms []blip.NodeId) !blip.Value {
+	mut last := blip.nil_value()
 	// An index loop, not `for f in forms`: the element type is a type alias from
 	// another module, and V 0.5.2 emits the unresolved name into the generated C
 	// for a range loop over such a slice. See docs/010-roadmap.md 7.3.
@@ -164,7 +167,8 @@ pub fn (mut m Machine) run(forms []vlip.NodeId) !vlip.Value {
 // appended to the machine's own arena rather than read into a fresh one: a
 // closure defined by the first run_str holds a NodeId, and a second arena would
 // renumber it.
-pub fn (mut m Machine) run_str(src string) !vlip.Value {
+pub fn (mut m Machine) run_str(src string) !blip.Value {
+	m.src_text = src
 	res := m.arena.read_forms(src)
 	return m.run_checked(res)
 }
@@ -172,9 +176,12 @@ pub fn (mut m Machine) run_str(src string) !vlip.Value {
 // run_forms evaluates forms already read into this machine's arena. It reports
 // read diagnostics as an error rather than printing them, because a caller that
 // embeds a machine has no one to print to.
-pub fn (mut m Machine) run_checked(res reader.Forms) !vlip.Value {
+pub fn (mut m Machine) run_checked(res reader.Forms) !blip.Value {
 	if res.diags.len > 0 {
 		d := res.diags[0]
+		if m.src_text != '' {
+			return error(blip.format_error(m.where(), m.src_text, d.line, d.col, d.msg, 1))
+		}
 		return error('${m.where()}:${d.line}:${d.col}: ${d.msg}${
 			if res.diags.len > 1 { ' (and ${res.diags.len - 1} more)' } else { '' }}')
 	}
@@ -187,10 +194,11 @@ pub fn (mut m Machine) run_checked(res reader.Forms) !vlip.Value {
 // It deliberately does not create a machine of its own. A `load` that started a
 // fresh machine would run the file perfectly and then throw away every definition
 // in it, which is the specific failure the roadmap calls out.
-pub fn (mut m Machine) load(path string) !vlip.Value {
+pub fn (mut m Machine) load(path string) !blip.Value {
 	src := m.host.host_load(path)!
 	prev := m.source
 	m.source = path
+	m.src_text = src
 	res := m.arena.read_forms(src)
 	out := m.run_checked(res)!
 	m.source = prev
@@ -200,15 +208,42 @@ pub fn (mut m Machine) load(path string) !vlip.Value {
 // where labels the current source for an error message.
 pub fn (m &Machine) where() string {
 	if m.source == '' {
-		return 'vlip'
+		return 'blip'
 	}
 	return m.source
 }
 
+// decorate_error wraps a runtime error with source context.
+//
+// The machine knows which form was being evaluated when the error occurred
+// (m.form) and the reader recorded that form's position on the node. This
+// turns a bare "unbound identifier: foo" into a Rust-style frame showing the
+// source line and underlining the token.
+//
+// Without source text (a form evaluated by eval_one before src_text was set,
+// or a synthetic node with no position), the message passes through unchanged.
+fn (m &Machine) decorate_error(msg string) string {
+	if m.src_text == '' || m.form == blip.no_node {
+		return msg
+	}
+	d := m.arena.node(m.form)
+	if d.line == 0 {
+		return msg
+	}
+	mut length := 1
+	if msg.starts_with('unbound identifier: ') {
+		length = msg.len - 'unbound identifier: '.len
+	} else if msg.starts_with('set! cannot assign to unbound identifier: ') {
+		prefix := 'set! cannot assign to unbound identifier: '
+		length = msg.len - prefix.len
+	}
+	return blip.format_error(m.where(), m.src_text, d.line, d.col, msg, length)
+}
+
 // render_node prints a form back to source, for an error message that has to name
 // a pattern or a message string.
-pub fn (m &Machine) render_node(n vlip.NodeId) string {
-	if n == vlip.no_node {
+pub fn (m &Machine) render_node(n blip.NodeId) string {
+	if n == blip.no_node {
 		return ''
 	}
 	return printer.write_datum(m.arena, n)
@@ -216,7 +251,7 @@ pub fn (m &Machine) render_node(n vlip.NodeId) string {
 
 // eval_one evaluates a single form, for the REPL. It resets the control state
 // first, so a form that failed to evaluate leaves nothing behind.
-pub fn (mut m Machine) eval_one(f vlip.NodeId) !vlip.Value {
+pub fn (mut m Machine) eval_one(f blip.NodeId) !blip.Value {
 	m.reset()
 	m.form = f
 	m.ctl = .eval_form
@@ -227,9 +262,9 @@ pub fn (mut m Machine) eval_one(f vlip.NodeId) !vlip.Value {
 // evaluating each in turn and returning the last value. Unlike run_str it does
 // not stop at the first failure: the REPL needs to keep going, and so does a
 // file that prints a warning and carries on.
-pub fn (mut m Machine) eval_string_lenient(src string) !vlip.Value {
+pub fn (mut m Machine) eval_string_lenient(src string) !blip.Value {
 	res := m.arena.read_forms(src)
-	mut last := vlip.nil_value()
+	mut last := blip.nil_value()
 	mut i := 0
 	for i < res.forms.len {
 		last = m.eval_one(res.forms[i])!
@@ -239,7 +274,7 @@ pub fn (mut m Machine) eval_string_lenient(src string) !vlip.Value {
 }
 
 
-fn (mut m Machine) drive() !vlip.Value {
+fn (mut m Machine) drive() !blip.Value {
 	for {
 		m.steps++
 		if m.steps > m.max_steps {
@@ -252,7 +287,9 @@ fn (mut m Machine) drive() !vlip.Value {
 		// demands an `else` arm on a match over an enum even when every value is
 		// covered, and there is no honest third state to put there.
 		if m.ctl == .eval_form {
-			m.step_eval()!
+			m.step_eval() or {
+				return error(m.decorate_error(err.msg()))
+			}
 		} else if !m.step_return()! {
 			return m.val
 		}
@@ -261,19 +298,19 @@ fn (mut m Machine) drive() !vlip.Value {
 
 // kont builds a continuation frame. The env field inside Kont is a reference
 // field, so V requires the literal to be unsafe.
-fn (mut m Machine) kont(tag vlip.KontTag) vlip.Kont {
+fn (mut m Machine) kont(tag blip.KontTag) blip.Kont {
 	return unsafe {
-		vlip.Kont{
+		blip.Kont{
 			tag: tag
 		}
 	}
 }
 
-fn (mut m Machine) push(k vlip.Kont) {
+fn (mut m Machine) push(k blip.Kont) {
 	m.kstack << k
 }
 
-fn (mut m Machine) pop() vlip.Kont {
+fn (mut m Machine) pop() blip.Kont {
 	last := m.kstack[m.kstack.len - 1]
 	m.kstack = m.kstack[..m.kstack.len - 1]
 	return last
@@ -283,7 +320,7 @@ fn (mut m Machine) ret() {
 	m.ctl = .return_value
 }
 
-fn (mut m Machine) goto(form vlip.NodeId) {
+fn (mut m Machine) goto(form blip.NodeId) {
 	m.form = form
 	m.ctl = .eval_form
 }
@@ -304,37 +341,37 @@ fn (mut m Machine) step_eval() ! {
 
 	match d.tag {
 		.nil {
-			m.val = vlip.nil_value()
+			m.val = blip.nil_value()
 			m.ret()
 			return
 		}
 		.bool {
-			m.val = vlip.boolean(d.i != 0)
+			m.val = blip.boolean(d.i != 0)
 			m.ret()
 			return
 		}
 		.int {
-			m.val = vlip.integer(d.i)
+			m.val = blip.integer(d.i)
 			m.ret()
 			return
 		}
 		.char {
-			m.val = vlip.rune(u32(d.i))
+			m.val = blip.rune(u32(d.i))
 			m.ret()
 			return
 		}
 		.float {
-			m.val = vlip.float(d.f)
+			m.val = blip.float(d.f)
 			m.ret()
 			return
 		}
 		.str {
-			m.val = vlip.string(d.value)
+			m.val = blip.string(d.value)
 			m.ret()
 			return
 		}
 		.kw {
-			m.val = vlip.keyword(d.value)
+			m.val = blip.keyword(d.value)
 			m.ret()
 			return
 		}
@@ -356,7 +393,7 @@ fn (mut m Machine) step_eval() ! {
 			if kids.len == 0 {
 				// `()` is the empty list, not nil: a form has to produce the
 				// value it reads as, and the examples assert `(list) ;=> ()`.
-				m.val = vlip.empty_list()
+				m.val = blip.empty_list()
 				m.ret()
 				return
 			}
@@ -382,17 +419,17 @@ fn (mut m Machine) eval_symbol(name string) ! {
 	// nil and the boolean symbols evaluate to themselves
 	match name {
 		'nil', 'none' {
-			m.val = vlip.nil_value()
+			m.val = blip.nil_value()
 			m.ret()
 			return
 		}
 		'true' {
-			m.val = vlip.boolean(true)
+			m.val = blip.boolean(true)
 			m.ret()
 			return
 		}
 		'false' {
-			m.val = vlip.boolean(false)
+			m.val = blip.boolean(false)
 			m.ret()
 			return
 		}
@@ -411,7 +448,7 @@ fn (mut m Machine) eval_symbol(name string) ! {
 		return m.eval_field_access(name)
 	}
 	if name in m.prims || machine_builtin(name) {
-		m.val = vlip.new_prim(name)
+		m.val = blip.new_prim(name)
 		m.ret()
 		return
 	}
@@ -441,7 +478,7 @@ fn machine_builtin(name string) bool {
 
 // show_value renders one argument. `quoted` distinguishes `print` from `display`:
 // `print` shows strings with their quotes and `display` does not.
-fn show_value(a vlip.Value, quoted bool) string {
+fn show_value(a blip.Value, quoted bool) string {
 	if a.tag == .string && !quoted {
 		return a.as_string()
 	}
@@ -459,7 +496,7 @@ fn show_value(a vlip.Value, quoted bool) string {
 // operation and it is older: `(remove {:a 1} :a)` means "a table without :a". Two
 // meanings under one name would have had to be chosen at the call site, and the
 // examples use both.
-fn (mut m Machine) hof(name string, args []vlip.Value) ! {
+fn (mut m Machine) hof(name string, args []blip.Value) ! {
 	if args.len < 2 {
 		return error('${name} expects at least 2 arguments, got ${args.len}')
 	}
@@ -470,10 +507,10 @@ fn (mut m Machine) hof(name string, args []vlip.Value) ! {
 	want_vector := name == 'vector-map'
 	keep := name in ['filter', 'keep']
 	drop := name == 'reject'
-	mut out := []vlip.Value{}
+	mut out := []blip.Value{}
 	mut i := 0
 	for i < items.len {
-		mut one := []vlip.Value{}
+		mut one := []blip.Value{}
 		one << items[i]
 		v := m.call_value(f, one)!
 		if drop {
@@ -490,23 +527,23 @@ fn (mut m Machine) hof(name string, args []vlip.Value) ! {
 		i++
 	}
 	if name == 'for-each' {
-		m.val = vlip.nil_value()
+		m.val = blip.nil_value()
 		m.ret()
 		return
 	}
 	if want_vector {
-		m.val = vlip.vector(out)
+		m.val = blip.vector(out)
 		m.ret()
 		return
 	}
-	m.val = vlip.list_from(out)
+	m.val = blip.list_from(out)
 	m.ret()
 }
 
 // fold is left-associative with an explicit initial value; reduce takes the first
 // element as the initial one, which is the only difference between them that
 // matters and is a whole extra function in every Lisp that has both.
-fn (mut m Machine) fold(name string, args []vlip.Value) ! {
+fn (mut m Machine) fold(name string, args []blip.Value) ! {
 	if name == 'reduce' && args.len == 2 {
 		items := prims.seq(args[1]) or {
 			return error('reduce: ${err.msg()}')
@@ -514,7 +551,7 @@ fn (mut m Machine) fold(name string, args []vlip.Value) ! {
 		if items.len == 0 {
 			return error('reduce: the sequence is empty, so there is nothing to start from')
 		}
-		mut call := []vlip.Value{}
+		mut call := []blip.Value{}
 		call << args[0]
 		mut i := 1
 		for i < items.len {
@@ -534,7 +571,7 @@ fn (mut m Machine) fold(name string, args []vlip.Value) ! {
 	}
 	mut i := 0
 	for i < items.len {
-		mut call := []vlip.Value{}
+		mut call := []blip.Value{}
 		call << acc
 		call << items[i]
 		acc = m.call_value(args[0], call)!
@@ -544,7 +581,7 @@ fn (mut m Machine) fold(name string, args []vlip.Value) ! {
 	m.ret()
 }
 
-fn (mut m Machine) any_every(name string, args []vlip.Value) ! {
+fn (mut m Machine) any_every(name string, args []blip.Value) ! {
 	if args.len < 2 {
 		return error('${name} expects 2 arguments, got ${args.len}')
 	}
@@ -553,7 +590,7 @@ fn (mut m Machine) any_every(name string, args []vlip.Value) ! {
 	}
 	mut i := 0
 	for i < items.len {
-		mut one := []vlip.Value{}
+		mut one := []blip.Value{}
 		one << items[i]
 		v := m.call_value(args[0], one)!
 		if name == 'any?' && v.truthy() {
@@ -571,21 +608,21 @@ fn (mut m Machine) any_every(name string, args []vlip.Value) ! {
 	// `any?` over an empty sequence is false and `every?` is true: the universal
 	// quantifier over nothing holds. The other way round makes `(every? p '())`
 	// false and every filter-then-check pipeline wrong at the edges.
-	m.val = vlip.boolean(name == 'every?')
+	m.val = blip.boolean(name == 'every?')
 	m.ret()
 }
 
-fn (mut m Machine) sort_by(args []vlip.Value) ! {
+fn (mut m Machine) sort_by(args []blip.Value) ! {
 	if args.len != 2 {
 		return error('sort-by expects 2 arguments, got ${args.len}')
 	}
 	items := prims.seq(args[1]) or {
 		return error('sort-by: ${err.msg()}')
 	}
-	mut keys := []vlip.Value{}
+	mut keys := []blip.Value{}
 	mut i := 0
 	for i < items.len {
-		mut one := []vlip.Value{}
+		mut one := []blip.Value{}
 		one << items[i]
 		keys << m.call_value(args[0], one)!
 		i++
@@ -601,22 +638,22 @@ fn (mut m Machine) sort_by(args []vlip.Value) ! {
 // wrong here: the caller is in the middle of call_primitive and would be
 // overwritten. So this saves the control state, applies, drives to completion,
 // and puts the state back. That is why eval_one had to save and restore too.
-fn (mut m Machine) call_value(f vlip.Value, args []vlip.Value) !vlip.Value {
+fn (mut m Machine) call_value(f blip.Value, args []blip.Value) !blip.Value {
 	saved_k := m.kstack
 	saved_ctl := m.ctl
 	saved_form := m.form
 	saved_env := m.env
 	saved_val := m.val
-	m.kstack = []vlip.Kont{}
+	m.kstack = []blip.Kont{}
 	m.ctl = .eval_form
 	m.env = m.globals
-	mut all := []vlip.Value{}
+	mut all := []blip.Value{}
 	all << f
 	for a in args {
 		all << a
 	}
 	m.apply_all(all)!
-	out := m.drive() or { vlip.nil_value() }
+	out := m.drive() or { blip.nil_value() }
 	m.kstack = saved_k
 	m.ctl = saved_ctl
 	m.form = saved_form
@@ -631,7 +668,7 @@ fn (mut m Machine) call_value(f vlip.Value, args []vlip.Value) !vlip.Value {
 // as `(ok 42)`, compares structurally, and needs no new Value tag. The obvious
 // alternative -- a dedicated struct -- makes every result a special case in the
 // printer, in `=`, and in the pattern matcher, for no gain.
-fn is_result_of(v vlip.Value, kind string) bool {
+fn is_result_of(v blip.Value, kind string) bool {
 	if v.tag != .pair {
 		return false
 	}
@@ -642,7 +679,7 @@ fn is_result_of(v vlip.Value, kind string) bool {
 	return head.as_string() == kind
 }
 
-fn kind_of(v vlip.Value) string {
+fn kind_of(v blip.Value) string {
 	if v.tag == .pair {
 		head := v.as_pair().car
 		if head.tag == .symbol {
@@ -652,9 +689,9 @@ fn kind_of(v vlip.Value) string {
 	return 'not-a-result'
 }
 
-fn inner_value(v vlip.Value) vlip.Value {
+fn inner_value(v blip.Value) blip.Value {
 	if v.tag != .pair {
-		return vlip.nil_value()
+		return blip.nil_value()
 	}
 	return v.as_pair().cdr.as_pair().car
 }
@@ -664,7 +701,7 @@ fn inner_value(v vlip.Value) vlip.Value {
 // argument is evaluated eagerly, so `(lazy-map-result (err 'e) (fn [x] (/ x 0)))`
 // has already run `(/ x 0)` by the time the function is called. The name is the
 // only place the laziness can be stated.
-fn (mut m Machine) result_combinator(name string, args []vlip.Value) ! {
+fn (mut m Machine) result_combinator(name string, args []blip.Value) ! {
 	if args.len != 2 {
 		return error('${name} expects 2 arguments, got ${args.len}')
 	}
@@ -690,12 +727,12 @@ fn (mut m Machine) result_combinator(name string, args []vlip.Value) ! {
 		if rest.len > 1 {
 			m.val = rest[1]
 		} else {
-			m.val = vlip.nil_value()
+			m.val = blip.nil_value()
 		}
 		m.ret()
 		return
 	}
-	mut one := []vlip.Value{}
+	mut one := []blip.Value{}
 	one << inner_value(args[0])
 	v := m.call_value(args[1], one)!
 	if is_result_of(v, 'err') {
@@ -703,12 +740,12 @@ fn (mut m Machine) result_combinator(name string, args []vlip.Value) ! {
 		m.ret()
 		return
 	}
-	m.val = vlip.list_from([vlip.symbol('ok'), v])
+	m.val = blip.list_from([blip.symbol('ok'), v])
 	m.ret()
 }
 
 
-fn (mut m Machine) eval_list(id vlip.NodeId, kids []vlip.NodeId) ! {
+fn (mut m Machine) eval_list(id blip.NodeId, kids []blip.NodeId) ! {
 	head := m.arena.node(kids[0])
 	if head.tag == .sym {
 		if special_form(head.value) {
@@ -740,7 +777,7 @@ fn (mut m Machine) eval_list(id vlip.NodeId, kids []vlip.NodeId) ! {
 	m.goto(kids[0])
 }
 
-fn (m &Machine) is_update_marker(n vlip.NodeId) bool {
+fn (m &Machine) is_update_marker(n blip.NodeId) bool {
 	d := m.arena.node(n)
 	// `:=` is a KEYWORD, not a symbol: the reader turns any token starting with a
 	// colon into a keyword, so `:=` arrives as a keyword whose value is `=`.
@@ -763,7 +800,7 @@ fn (m &Machine) is_update_marker(n vlip.NodeId) bool {
 // `base` is a NAME, not an expression. `(p.y := 1)` is the form the examples use
 // and the reader produces that shape for it; `(mk).y := 1` is a different shape,
 // and is not supported. Saying so here beats accepting half of it.
-fn (mut m Machine) eval_field_update(what string, value_node vlip.NodeId) ! {
+fn (mut m Machine) eval_field_update(what string, value_node blip.NodeId) ! {
 	dot := what.last_index('.') or {
 		return error('${what} is not a field update')
 	}
@@ -774,7 +811,7 @@ fn (mut m Machine) eval_field_update(what string, value_node vlip.NodeId) ! {
 	}
 	mut nf := m.kont(.field_k)
 	nf.name = field
-	nf.acc = []vlip.Value{}
+	nf.acc = []blip.Value{}
 	nf.acc << base
 	m.push(nf)
 	m.goto(value_node)
@@ -794,7 +831,7 @@ fn (mut m Machine) eval_field_access(what string) ! {
 	return error('unbound identifier: ${base_name} (in field access ${what})')
 }
 
-pub fn (m &Machine) field_of(v vlip.Value, field string) !vlip.Value {
+pub fn (m &Machine) field_of(v blip.Value, field string) !blip.Value {
 	if v.tag == .struct_ {
 		s := v.as_struct()
 		if !s.has(field) {
@@ -827,7 +864,7 @@ fn (mut m Machine) step_return() !bool {
 			kids := m.arena.kids(k.rest)
 			if kids.len == 1 {
 				// zero arguments
-				mut all := []vlip.Value{}
+				mut all := []blip.Value{}
 				all << m.val
 				m.apply_all(all)!
 			} else {
@@ -835,7 +872,7 @@ fn (mut m Machine) step_return() !bool {
 				k2.rest = k.rest
 				k2.env = k.env
 				k2.slot = 1
-				k2.acc = []vlip.Value{}
+				k2.acc = []blip.Value{}
 				k2.acc << m.val
 				m.push(k2)
 				m.env = k.env
@@ -875,7 +912,7 @@ fn (mut m Machine) step_return() !bool {
 			} else if kids.len > 3 {
 				m.goto(kids[3])
 			} else {
-				m.val = vlip.nil_value()
+				m.val = blip.nil_value()
 				m.ret()
 			}
 		}
@@ -907,7 +944,7 @@ fn (mut m Machine) step_return() !bool {
 			// when the value was produced by a call.
 			m.env = k.env
 			m.envs.define(m.env, k.name, m.val)
-			m.val = vlip.symbol(k.name)
+			m.val = blip.symbol(k.name)
 			m.ret()
 		}
 		.set_k {
@@ -922,7 +959,7 @@ fn (mut m Machine) step_return() !bool {
 				// program.
 				return error('set! cannot assign to unbound identifier: ${k.name}')
 			}
-			m.val = vlip.nil_value()
+			m.val = blip.nil_value()
 			m.ret()
 		}
 		.and_k {
@@ -964,7 +1001,7 @@ fn (mut m Machine) step_return() !bool {
 				return error('${base.as_struct().name} has no field ${k.name}')
 			}
 			next := base.as_struct().with(k.name, m.val)
-			m.val = vlip.Value{
+			m.val = blip.Value{
 				tag:     .struct_
 				payload: next
 			}
@@ -1020,7 +1057,7 @@ fn (mut m Machine) step_return() !bool {
 			}
 			mut next := k
 			next.slot = k.slot + 1
-			mut subj := vlip.nil_value()
+			mut subj := blip.nil_value()
 			if k.acc.len > 0 {
 				subj = k.acc[0]
 			}
@@ -1077,7 +1114,7 @@ fn (mut m Machine) step_return() !bool {
 		}
 		.assert_k {
 			if m.val.truthy() {
-				m.val = vlip.nil_value()
+				m.val = blip.nil_value()
 				m.ret()
 				return true
 			}
@@ -1103,10 +1140,10 @@ fn (mut m Machine) step_return() !bool {
 // the single argument is the collection. The alternative -- treating an
 // unapplied keyword as nil, which is what the first version did -- turns the
 // single most common Lisp idiom into a nil call.
-fn (mut m Machine) apply_all(all_in []vlip.Value) ! {
+fn (mut m Machine) apply_all(all_in []blip.Value) ! {
 	mut all := all_in.clone()
 	callee := all[0]
-	mut args := []vlip.Value{}
+	mut args := []blip.Value{}
 	for i in 1 .. all.len {
 		args << all[i]
 	}
@@ -1153,7 +1190,7 @@ fn (mut m Machine) apply_all(all_in []vlip.Value) ! {
 
 // lookup_key is the one collection lookup every callable-collection path shares.
 // `key` is already a string; the caller has decided where it came from.
-fn (mut m Machine) lookup_key(key string, coll vlip.Value) !vlip.Value {
+fn (mut m Machine) lookup_key(key string, coll blip.Value) !blip.Value {
 	match coll.tag {
 		.table, .buffer {
 			return coll.as_table().get(key)
@@ -1174,7 +1211,7 @@ fn (mut m Machine) lookup_key(key string, coll vlip.Value) !vlip.Value {
 	}
 }
 
-fn (mut m Machine) call_closure(c &vlip.Closure, args []vlip.Value) ! {
+fn (mut m Machine) call_closure(c &blip.Closure, args []blip.Value) ! {
 	mut use_args := args
 	if c.opt_from >= 0 {
 		// The caller's scope is the environment the APPLICATION form was written in.
@@ -1196,7 +1233,7 @@ fn (mut m Machine) call_closure(c &vlip.Closure, args []vlip.Value) ! {
 			m.envs.define(frame, c.params[i], use_args[i])
 			i++
 		}
-		m.envs.define(frame, c.rest_name, vlip.list_from(use_args[c.arity..]))
+		m.envs.define(frame, c.rest_name, blip.list_from(use_args[c.arity..]))
 		m.env = frame
 		m.goto(c.body)
 		return
@@ -1221,12 +1258,12 @@ fn (mut m Machine) call_closure(c &vlip.Closure, args []vlip.Value) ! {
 // The default is an arena NODE, not a value, so it needs the machine to evaluate.
 // `call_value` applies a callable VALUE; this evaluates a FORM. Keeping them
 // separate is why the two are not one function with a `?Value` parameter.
-fn (mut m Machine) eval_default(n vlip.NodeId, args []vlip.Value) !vlip.Value {
-	mut a := []vlip.Value{}
+fn (mut m Machine) eval_default(n blip.NodeId, args []blip.Value) !blip.Value {
+	mut a := []blip.Value{}
 	for x in args {
 		a << x
 	}
-	mut all := []vlip.Value{}
+	mut all := []blip.Value{}
 	all << m.closure_from_form(n)
 	for x in a {
 		all << x
@@ -1237,15 +1274,15 @@ fn (mut m Machine) eval_default(n vlip.NodeId, args []vlip.Value) !vlip.Value {
 // closure_from_form builds a zero-parameter-callable from a form, so eval_default
 // can reuse call_value. `(lambda (v) v)` is the identity on values and this is
 // the identity on forms.
-fn (mut m Machine) closure_from_form(n vlip.NodeId) vlip.Value {
-	return vlip.new_closure([]string{}, n, m.env, 'default')
+fn (mut m Machine) closure_from_form(n blip.NodeId) blip.Value {
+	return blip.new_closure([]string{}, n, m.env, 'default')
 }
 //
 // The application frame is still on the stack when the callee is applied, so this
 // is a peek rather than a stored field. A default expression must be evaluated
 // there: `(connect m #:port (compute))` computes in the caller's scope, and
 // `m.env` at this point is wherever the last argument left it.
-fn (m &Machine) kont_caller() vlip.EnvId {
+fn (m &Machine) kont_caller() blip.EnvId {
 	if m.kstack.len == 0 {
 		return m.globals
 	}
@@ -1260,12 +1297,12 @@ fn (m &Machine) kont_caller() vlip.EnvId {
 // site is deliberate: by this point the callee is a value, so its labels are
 // known, and the keyword arguments have already been evaluated -- which is right,
 // because `(connect m #:port (compute))` must run `compute`.
-fn (mut m Machine) fill_labels(c &vlip.Closure, args []vlip.Value, caller vlip.EnvId) ![]vlip.Value {
-	mut slots := []vlip.Value{}
+fn (mut m Machine) fill_labels(c &blip.Closure, args []blip.Value, caller blip.EnvId) ![]blip.Value {
+	mut slots := []blip.Value{}
 	mut filled := []bool{}
 	mut i := 0
 	for i < c.params.len {
-		slots << vlip.nil_value()
+		slots << blip.nil_value()
 		filled << false
 		i++
 	}
@@ -1319,11 +1356,11 @@ fn (mut m Machine) fill_labels(c &vlip.Closure, args []vlip.Value, caller vlip.E
 	for j < c.params.len {
 		if !filled[j] {
 			d := c.opt_defaults[j - c.opt_from]
-			if d == vlip.no_default {
+			if d == blip.no_default {
 				m.env = saved_env
 				return error('${c.name}: ${c.opt_names[j - c.opt_from]} is required')
 			}
-			one := []vlip.Value{}
+			one := []blip.Value{}
 			slots[j] = m.eval_default(d, one)!
 		}
 		j++
@@ -1350,7 +1387,7 @@ fn plural(n int) string {
 // message in the examples come out as `Hello, "world".` -- because ~a is the
 // directive for "any value", and quoting is what `print` does, not what a
 // formatter does.
-fn format_args(args []vlip.Value) string {
+fn format_args(args []blip.Value) string {
 	if args.len == 0 {
 		return ''
 	}
@@ -1380,7 +1417,7 @@ fn format_args(args []vlip.Value) string {
 	return out.bytestr()
 }
 
-fn (mut m Machine) call_primitive(name string, args []vlip.Value) ! {
+fn (mut m Machine) call_primitive(name string, args []blip.Value) ! {
 	// Builtins that need to call back into the interpreter are handled here
 	// rather than through the plain-function table.
 	match name {
@@ -1389,7 +1426,7 @@ fn (mut m Machine) call_primitive(name string, args []vlip.Value) ! {
 				return error('apply expects at least 2 arguments, got ${args.len}')
 			}
 			// (apply f a b) => (f a b); a trailing list argument is spliced.
-			mut all := []vlip.Value{}
+			mut all := []blip.Value{}
 			all << args[0]
 			mut i := 1
 			for i < args.len {
@@ -1410,7 +1447,7 @@ fn (mut m Machine) call_primitive(name string, args []vlip.Value) ! {
 			// expression, and because a value can be passed around before it is
 			// raised. `error` used to abort on the spot, which made `raise`
 			// unreachable and turned every raise site into an abort.
-			m.val = vlip.list_from([vlip.symbol('err'), vlip.string(format_args(args))])
+			m.val = blip.list_from([blip.symbol('err'), blip.string(format_args(args))])
 			m.ret()
 			return
 		}
@@ -1447,25 +1484,25 @@ fn (mut m Machine) call_primitive(name string, args []vlip.Value) ! {
 			}
 k := m.kstack[idx]
 			m.kstack = m.kstack[..idx]
-			if k.expr == vlip.no_node {
+			if k.expr == blip.no_node {
 				// No handler, so the error still propagates -- but #:finally runs
 				// first, and `val2` carries the message through it.
-				if k.rest == vlip.no_node {
+				if k.rest == blip.no_node {
 					return error('raised: ${msg}')
 				}
 				mut k2 := k
 				k2.slot = -4
-				m.val2 = vlip.string(msg)
+				m.val2 = blip.string(msg)
 				m.push(k2)
 				m.env = k.env
 				m.goto(k.rest)
 				return
 			}
-			m.val2 = vlip.list_from([vlip.symbol('err'), vlip.string(msg)])
+			m.val2 = blip.list_from([blip.symbol('err'), blip.string(msg)])
 			return m.try_caught(k)
 		}
 		'format' {
-			m.val = vlip.string(format_args(args))
+			m.val = blip.string(format_args(args))
 			m.ret()
 			return
 		}
@@ -1489,7 +1526,7 @@ k := m.kstack[idx]
 			}
 			m.out << text
 			m.host.host_print(text)
-			m.val = vlip.nil_value()
+			m.val = blip.nil_value()
 			m.ret()
 			return
 		}
@@ -1498,14 +1535,14 @@ k := m.kstack[idx]
 			// reads a character and stores its value, and a line is the smallest
 			// unit the host can read.
 			line := m.host.host_read_line() or { '' }
-			m.val = vlip.string(line)
+			m.val = blip.string(line)
 			m.ret()
 			return
 		}
 		'gensym' {
 			// Unhygienic macros need fresh names. Including the step counter
 			// keeps them unique within one expansion run.
-			m.val = vlip.symbol('g${m.steps}')
+			m.val = blip.symbol('g${m.steps}')
 			m.ret()
 			return
 		}
@@ -1516,7 +1553,7 @@ k := m.kstack[idx]
 			text := if args.len == 0 { '' } else { show_value(args[0], false) }
 			m.host.host_print(text)
 			if args.len == 0 {
-				m.val = vlip.nil_value()
+				m.val = blip.nil_value()
 			} else {
 				m.val = args[0]
 			}
@@ -1544,28 +1581,28 @@ k := m.kstack[idx]
 		}
 		// ---- Result ---------------------------------------------------
 		'ok' {
-			mut items := []vlip.Value{}
-			items << vlip.symbol('ok')
+			mut items := []blip.Value{}
+			items << blip.symbol('ok')
 			for a in args {
 				items << a
 			}
-			m.val = vlip.list_from(items)
+			m.val = blip.list_from(items)
 			m.ret()
 			return
 		}
 		'err' {
-			mut items := []vlip.Value{}
-			items << vlip.symbol('err')
+			mut items := []blip.Value{}
+			items << blip.symbol('err')
 			for a in args {
 				items << a
 			}
-			m.val = vlip.list_from(items)
+			m.val = blip.list_from(items)
 			m.ret()
 			return
 		}
 		'ok?', 'err?' {
 			kind := if name == 'ok?' { 'ok' } else { 'err' }
-			m.val = vlip.boolean(is_result_of(args[0], kind))
+			m.val = blip.boolean(is_result_of(args[0], kind))
 			m.ret()
 			return
 		}
@@ -1581,7 +1618,7 @@ k := m.kstack[idx]
 			if i < rest.len {
 				m.val = rest[i]
 			} else {
-				m.val = vlip.nil_value()
+				m.val = blip.nil_value()
 			}
 			m.ret()
 			return
@@ -1592,7 +1629,7 @@ k := m.kstack[idx]
 				if rest.len > 1 {
 					m.val = rest[1]
 				} else {
-					m.val = vlip.nil_value()
+					m.val = blip.nil_value()
 				}
 			} else {
 				m.val = args[1]
@@ -1612,7 +1649,7 @@ k := m.kstack[idx]
 			}
 			deeper := kind_of(inner_value(args[0]))
 			if deeper != 'nil' {
-				m.val = vlip.list_from([vlip.symbol(inner_kind), inner_value(args[0])])
+				m.val = blip.list_from([blip.symbol(inner_kind), inner_value(args[0])])
 			} else {
 				m.val = args[0]
 			}
@@ -1620,7 +1657,7 @@ k := m.kstack[idx]
 			return
 		}
 		'all-results' {
-			mut vals := []vlip.Value{}
+			mut vals := []blip.Value{}
 			mut i := 0
 			for i < args.len {
 				if !is_result_of(args[i], 'ok') {
@@ -1636,7 +1673,7 @@ k := m.kstack[idx]
 				}
 				i++
 			}
-			m.val = vlip.list_from([vlip.symbol('ok'), vlip.vector(vals)])
+			m.val = blip.list_from([blip.symbol('ok'), blip.vector(vals)])
 			m.ret()
 			return
 		}
@@ -1648,7 +1685,7 @@ k := m.kstack[idx]
 	f := m.prims[name] or {
 		return error('unknown primitive: ${name}')
 	}
-	mut call_args := []vlip.Value{}
+	mut call_args := []blip.Value{}
 	for a in args {
 		call_args << a
 	}
@@ -1664,7 +1701,7 @@ pub fn special_form(name string) bool {
 	return name in ['quote', 'if', 'define', 'set!', 'lambda', 'fn', 'begin', 'let', 'let*', 'letrec', 'and', 'or', 'when', 'unless', 'cond', 'case', 'loop', 'dotimes', 'use', 'match', 'match*', 'struct', 'struct-out', 'provide', 'require', 'let-assert', 'do', 'time', 'assert', '->', '->>', '|>', 'as->', 'cond->', 'def', 'defmacro', 'try', 'macex', 'macex1']
 }
 
-fn (mut m Machine) eval_special(name string, id vlip.NodeId, kids []vlip.NodeId) ! {
+fn (mut m Machine) eval_special(name string, id blip.NodeId, kids []blip.NodeId) ! {
 	// Core forms first.
 	match name {
 		'quote' {
@@ -1692,7 +1729,7 @@ fn (mut m Machine) eval_special(name string, id vlip.NodeId, kids []vlip.NodeId)
 			// `def` is `define`. The examples use it to mean "introduce a name",
 			// which is the same operation with a different connotation: `define` on
 			// an existing name is a redefinition, `def` is not supposed to be.
-			// vlip does not enforce the difference -- a stricter language would warn
+			// blip does not enforce the difference -- a stricter language would warn
 			// -- and this comment is where that decision is recorded.
 			return m.eval_define(kids)
 		}
@@ -1738,7 +1775,7 @@ mut nf := m.kont(.set_k)
 		}
 		'begin' {
 			if kids.len == 1 {
-				m.val = vlip.nil_value()
+				m.val = blip.nil_value()
 				m.ret()
 				return
 			}
@@ -1765,14 +1802,14 @@ mut nf := m.kont(.set_k)
 		}
 		'and', 'or' {
 			if kids.len == 1 {
-				m.val = vlip.boolean(name == 'and')
+				m.val = blip.boolean(name == 'and')
 				m.ret()
 				return
 			}
 	tag := if name == 'and' {
-				vlip.KontTag.and_k
+				blip.KontTag.and_k
 			} else {
-				vlip.KontTag.or_k
+				blip.KontTag.or_k
 			}
 			mut nf := m.kont(tag)
 			nf.rest = id
@@ -1847,7 +1884,7 @@ mut nf := m.kont(.set_k)
 			// Only meaningful inside `provide`, where it expands to the constructor
 			// and the accessors. On its own it is a no-op that still succeeds, so a
 			// module can `provide` the same names twice without breaking.
-			m.val = vlip.nil_value()
+			m.val = blip.nil_value()
 			m.ret()
 			return
 		}
@@ -1855,7 +1892,7 @@ mut nf := m.kont(.set_k)
 			// `provide` documents a module's interface. Nothing reads it yet, so it
 			// evaluates to nil rather than failing -- an unimplemented export list
 			// should not stop the module loading.
-			m.val = vlip.nil_value()
+			m.val = blip.nil_value()
 			m.ret()
 			return
 		}
@@ -1898,7 +1935,7 @@ mut nf := m.kont(.set_k)
 // `->` and `->>` are macros over `|>`, not three independent implementations. They
 // have to agree about what a "call" is, and three copies of that test is three
 // places for it to drift.
-fn (mut m Machine) eval_pipe(name string, kids []vlip.NodeId) ! {
+fn (mut m Machine) eval_pipe(name string, kids []blip.NodeId) ! {
 	if kids.len < 2 {
 		return error('${name} needs a value to thread')
 	}
@@ -1930,7 +1967,7 @@ fn (mut m Machine) eval_pipe(name string, kids []vlip.NodeId) ! {
 }
 
 // is_pipe_head reports whether a form is one of the three threaders.
-fn (m &Machine) is_pipe_head(n vlip.NodeId) bool {
+fn (m &Machine) is_pipe_head(n blip.NodeId) bool {
 	kids := m.arena.kids(n)
 	if kids.len == 0 {
 		return false
@@ -1940,7 +1977,7 @@ fn (m &Machine) is_pipe_head(n vlip.NodeId) bool {
 }
 
 // pipe_one threads `acc` through one step under `mode`.
-fn (mut m Machine) pipe_one(acc vlip.NodeId, step vlip.NodeId, mode string) vlip.NodeId {
+fn (mut m Machine) pipe_one(acc blip.NodeId, step blip.NodeId, mode string) blip.NodeId {
 	d := m.arena.node(step)
 	// A `,echo` / bare symbol on the right of a pipe is a TAP: it is called on the
 	// value and the value continues down the pipe.
@@ -1961,14 +1998,14 @@ fn (mut m Machine) pipe_one(acc vlip.NodeId, step vlip.NodeId, mode string) vlip
 // argument: `(-> x f)` has to become `(f x)`, which is the LAST form. Treating a
 // bare step as "thread last regardless" is the rule `|>` states explicitly, and
 // it is the only one that leaves `(->> x | f)` meaning anything.
-fn (mut m Machine) pipe_through(acc vlip.NodeId, step vlip.NodeId, last bool) vlip.NodeId {
+fn (mut m Machine) pipe_through(acc blip.NodeId, step blip.NodeId, last bool) blip.NodeId {
 	d := m.arena.node(step)
 	if d.tag != .list {
 		return m.list_of([step, acc])
 	}
 	skids := m.arena.kids(step)
 	if last {
-		mut items := []vlip.NodeId{}
+		mut items := []blip.NodeId{}
 		// An index loop, not `for s in skids`: the element type is a type alias from
 		// another module and V 0.5.2 emits the unresolved name into the generated C.
 		mut si := 0
@@ -1979,7 +2016,7 @@ fn (mut m Machine) pipe_through(acc vlip.NodeId, step vlip.NodeId, last bool) vl
 		items << acc
 		return m.list_of(items)
 	}
-	mut items := []vlip.NodeId{}
+	mut items := []blip.NodeId{}
 	items << skids[0]
 	items << acc
 	mut j := 1
@@ -1997,11 +2034,11 @@ fn pipe_tap(name string) bool {
 	return name in ['echo', 'tap', 'debug']
 }
 
-fn (m &Machine) is_call_form(n vlip.NodeId) bool {
+fn (m &Machine) is_call_form(n blip.NodeId) bool {
 	return m.arena.node(n).tag == .list
 }
 
-fn (mut m Machine) eval_define(kids []vlip.NodeId) ! {
+fn (mut m Machine) eval_define(kids []blip.NodeId) ! {
 	if kids.len < 2 {
 		return error('define needs a name or a (name . params) list')
 	}
@@ -2028,7 +2065,7 @@ fn (mut m Machine) eval_define(kids []vlip.NodeId) ! {
 		// kids[2..] -- not sig[1..], which is the parameter list.
 		body := m.apply_destructures(spec, m.make_begin(kids[2..]))
 		m.envs.define(m.env, fname, m.make_closure(spec, body, m.env, fname))
-		m.val = vlip.symbol(fname)
+		m.val = blip.symbol(fname)
 		m.ret()
 		return
 	}
@@ -2048,7 +2085,7 @@ pub mut:
 	is_rest   bool
 	opt_from  int = -1
 	opt_names []string
-	opt_defaults []vlip.NodeId
+	opt_defaults []blip.NodeId
 	// Destructuring parameters, in parameter order. Each binds a temporary -- the
 	// name it was given in `names` -- and pulls names out of it with accessors
 	// evaluated in the body.
@@ -2059,7 +2096,7 @@ pub mut:
 // whole value, and the names pulled out of it.
 pub struct Destructure {
 pub mut:
-	temp  vlip.NodeId
+	temp  blip.NodeId
 	parts []Destructured
 }
 
@@ -2074,11 +2111,11 @@ pub mut:
 // The nest is built with `nest_lets`, the same helper `let` uses, because the
 // requirement is identical: the accessors must be evaluated in a scope where the
 // temporary is already bound, and the body must stay in tail position.
-fn (mut m Machine) apply_destructures(ps ParamSpec, body vlip.NodeId) vlip.NodeId {
+fn (mut m Machine) apply_destructures(ps ParamSpec, body blip.NodeId) blip.NodeId {
 	mut groups := []Group{}
 	for d in ps.destructures {
-		mut names := []vlip.NodeId{}
-		mut vals := []vlip.NodeId{}
+		mut names := []blip.NodeId{}
+		mut vals := []blip.NodeId{}
 		for p in d.parts {
 			names << p.name
 			vals << p.accessor
@@ -2096,7 +2133,7 @@ fn (mut m Machine) apply_destructures(ps ParamSpec, body vlip.NodeId) vlip.NodeI
 
 // no_default marks a labelled parameter with no default: a missing map entry and
 // a nil NodeId look the same in V, so one of them has to mean something else.
-pub const no_default = vlip.NodeId(-2)
+pub const no_default = blip.NodeId(-2)
 
 // parse_params accepts `(a b)`, `(a . b)` and the Racket-style `(fn [a b] ...)`
 // spelling, which `fn` normalises before calling here.
@@ -2106,11 +2143,11 @@ pub const no_default = vlip.NodeId(-2)
 // ordinary parameters, so `(define (f a . r) r)` had arity 3 and `(f 1 2 3)`
 // bound `r` to `3`. That is the "rest parameters return 3" bug, and it was a
 // parsing failure rather than a binding failure.
-pub fn (mut m Machine) parse_params(plist []vlip.NodeId, who string) !ParamSpec {
+pub fn (mut m Machine) parse_params(plist []blip.NodeId, who string) !ParamSpec {
 	mut spec := ParamSpec{
 		names:        []string{},
 		opt_names:    []string{},
-		opt_defaults: []vlip.NodeId{},
+		opt_defaults: []blip.NodeId{},
 	}
 	mut i := 0
 	for i < plist.len {
@@ -2231,7 +2268,7 @@ pub fn (mut m Machine) parse_params(plist []vlip.NodeId, who string) !ParamSpec 
 	return spec
 }
 
-fn (mut m Machine) eval_lambda(kids []vlip.NodeId) ! {
+fn (mut m Machine) eval_lambda(kids []blip.NodeId) ! {
 	if kids.len < 2 {
 		return error('lambda needs a parameter list')
 	}
@@ -2248,15 +2285,15 @@ fn (mut m Machine) eval_lambda(kids []vlip.NodeId) ! {
 // One place, because a rest parameter and a labelled parameter are different
 // constructors and picking the wrong one is silent: a labelled closure built by
 // the plain constructor has arity 3 and rejects every call with two arguments.
-pub fn (mut m Machine) make_closure(spec ParamSpec, body vlip.NodeId, env vlip.EnvId, name string) vlip.Value {
+pub fn (mut m Machine) make_closure(spec ParamSpec, body blip.NodeId, env blip.EnvId, name string) blip.Value {
 	if spec.opt_from >= 0 {
-		return vlip.labelled(spec.names, body, env, name, spec.opt_from, spec.opt_names,
+		return blip.labelled(spec.names, body, env, name, spec.opt_from, spec.opt_names,
 			spec.opt_defaults)
 	}
 	if spec.is_rest {
-		return vlip.new_rest_closure(spec.names, spec.rest, body, env, name)
+		return blip.new_rest_closure(spec.names, spec.rest, body, env, name)
 	}
-	return vlip.new_closure(spec.names, body, env, name)
+	return blip.new_closure(spec.names, body, env, name)
 }
 
 // ------------------------------------------------------------- arena helpers
@@ -2276,27 +2313,27 @@ pub fn (mut m Machine) fresh(base string) string {
 	return base + '_' + m.gensym.str()
 }
 
-pub fn (mut m Machine) sym_node(name string) vlip.NodeId {
+pub fn (mut m Machine) sym_node(name string) blip.NodeId {
 	return m.arena.str_leaf(.sym, name)
 }
 
-pub fn (mut m Machine) nil_node() vlip.NodeId {
+pub fn (mut m Machine) nil_node() blip.NodeId {
 	return m.arena.leaf(.nil)
 }
 
-pub fn (mut m Machine) int_node(n i64) vlip.NodeId {
+pub fn (mut m Machine) int_node(n i64) blip.NodeId {
 	return m.arena.int_leaf(.int, n)
 }
 
-pub fn (mut m Machine) string_node(s string) vlip.NodeId {
+pub fn (mut m Machine) string_node(s string) blip.NodeId {
 	return m.arena.str_leaf(.str, s)
 }
 
 // list_of2 is list_of with the two lists zipped. Binding forms and argument lists
 // are always written as pairs, and a helper that zips them keeps
 // transform_let_assert and transform_use from each building the pair by hand.
-pub fn (mut m Machine) list_of2(names []vlip.NodeId, vals []vlip.NodeId) vlip.NodeId {
-	mut items := []vlip.NodeId{}
+pub fn (mut m Machine) list_of2(names []blip.NodeId, vals []blip.NodeId) blip.NodeId {
+	mut items := []blip.NodeId{}
 	mut i := 0
 	for i < names.len {
 		items << m.list_of([names[i], vals[i]])
@@ -2306,8 +2343,8 @@ pub fn (mut m Machine) list_of2(names []vlip.NodeId, vals []vlip.NodeId) vlip.No
 }
 
 // node_of builds a list headed by the named symbol, followed by `tail`.
-pub fn (mut m Machine) node_of(head string, tail []vlip.NodeId) vlip.NodeId {
-	mut items := []vlip.NodeId{}
+pub fn (mut m Machine) node_of(head string, tail []blip.NodeId) blip.NodeId {
+	mut items := []blip.NodeId{}
 	items << m.sym_node(head)
 	// An index loop, not `for t in tail`: see the note in pipe_through.
 	mut ti := 0
@@ -2318,15 +2355,15 @@ pub fn (mut m Machine) node_of(head string, tail []vlip.NodeId) vlip.NodeId {
 	return m.list_of(items)
 }
 
-pub fn (mut m Machine) list_of(items []vlip.NodeId) vlip.NodeId {
+pub fn (mut m Machine) list_of(items []blip.NodeId) blip.NodeId {
 	id := m.arena.open(.list)
 	m.arena.finish(id, items)
 
 	return id
 }
 
-pub fn (mut m Machine) call_node(callee vlip.NodeId, args []vlip.NodeId) vlip.NodeId {
-	mut items := []vlip.NodeId{}
+pub fn (mut m Machine) call_node(callee blip.NodeId, args []blip.NodeId) blip.NodeId {
+	mut items := []blip.NodeId{}
 	items << callee
 	for a in args {
 		items << a
@@ -2336,7 +2373,7 @@ pub fn (mut m Machine) call_node(callee vlip.NodeId, args []vlip.NodeId) vlip.No
 
 // make_begin synthesises (begin e ...). A one-expression body is returned as-is,
 // and that is exactly what keeps a tail call a tail call.
-pub fn (mut m Machine) make_begin(forms []vlip.NodeId) vlip.NodeId {
+pub fn (mut m Machine) make_begin(forms []blip.NodeId) blip.NodeId {
 	if forms.len == 0 {
 		return m.nil_node()
 	}
@@ -2350,8 +2387,8 @@ pub fn (mut m Machine) make_begin(forms []vlip.NodeId) vlip.NodeId {
 
 struct Frame {
 mut:
-	id    vlip.NodeId
-	kids  []vlip.NodeId
+	id    blip.NodeId
+	kids  []blip.NodeId
 	start int
 }
 
@@ -2359,8 +2396,8 @@ mut:
 // Written with an explicit worklist rather than recursion, because V 0.5.2
 // mis-reports "evaluated but not used" for a variable used only as an argument
 // to a recursive call inside a for-loop body.
-pub fn (mut m Machine) datum_to_value(id vlip.NodeId) vlip.Value {
-	mut built := map[vlip.NodeId]vlip.Value{}
+pub fn (mut m Machine) datum_to_value(id blip.NodeId) blip.Value {
+	mut built := map[blip.NodeId]blip.Value{}
 	mut work := []Frame{}
 	work << Frame{
 		id:    id
@@ -2378,7 +2415,7 @@ pub fn (mut m Machine) datum_to_value(id vlip.NodeId) vlip.Value {
 			}
 			work << Frame{
 				id:    f.kids[f.start]
-				kids:  []vlip.NodeId{}
+				kids:  []blip.NodeId{}
 				start: 0
 			}
 			continue
@@ -2388,17 +2425,17 @@ pub fn (mut m Machine) datum_to_value(id vlip.NodeId) vlip.Value {
 	return built[id]
 }
 
-fn (mut m Machine) assemble(id vlip.NodeId, kids []vlip.NodeId, built map[vlip.NodeId]vlip.Value) vlip.Value {
+fn (mut m Machine) assemble(id blip.NodeId, kids []blip.NodeId, built map[blip.NodeId]blip.Value) blip.Value {
 	d := m.arena.node(id)
 	match d.tag {
-		.nil { return vlip.nil_value() }
-		.bool { return vlip.boolean(d.i != 0) }
-		.int { return vlip.integer(d.i) }
-		.float { return vlip.float(d.f) }
-		.char { return vlip.rune(u32(d.i)) }
-		.str { return vlip.string(d.value) }
-		.sym { return vlip.symbol(d.value) }
-		.kw { return vlip.keyword(d.value) }
+		.nil { return blip.nil_value() }
+		.bool { return blip.boolean(d.i != 0) }
+		.int { return blip.integer(d.i) }
+		.float { return blip.float(d.f) }
+		.char { return blip.rune(u32(d.i)) }
+		.str { return blip.string(d.value) }
+		.sym { return blip.symbol(d.value) }
+		.kw { return blip.keyword(d.value) }
 		.quoted { return m.datum_to_value(m.arena.kids(id)[0]) }
 		.unquote, .unquote_splice {
 			// Nested inside a quasiquote. Evaluated here rather than treated as
@@ -2411,7 +2448,7 @@ fn (mut m Machine) assemble(id vlip.NodeId, kids []vlip.NodeId, built map[vlip.N
 			return m.quasi_to_value(id)
 		}
 .list {
-			mut items := []vlip.Value{}
+			mut items := []blip.Value{}
 			mut ki := 0
 			for ki < kids.len {
 				child := kids[ki]
@@ -2422,7 +2459,7 @@ fn (mut m Machine) assemble(id vlip.NodeId, kids []vlip.NodeId, built map[vlip.N
 					// over the children and not over `built`.
 					spliced := m.quasi_to_value(child)
 					parts := prims.seq(spliced) or {
-						return vlip.nil_value()
+						return blip.nil_value()
 					}
 					mut si := 0
 					for si < parts.len {
@@ -2434,51 +2471,51 @@ fn (mut m Machine) assemble(id vlip.NodeId, kids []vlip.NodeId, built map[vlip.N
 				}
 				ki++
 			}
-			return vlip.list_from(items)
+			return blip.list_from(items)
 		}
 		.vector {
-			mut items := []vlip.Value{}
+			mut items := []blip.Value{}
 			mut ki := 0
 			for ki < kids.len {
 				items << built[kids[ki]]
 				ki++
 			}
-			return vlip.vector(items)
+			return blip.vector(items)
 		}
 		.table {
-			mut mm := map[string]vlip.Value{}
+			mut mm := map[string]blip.Value{}
 			mut i := 0
 			for i + 1 < kids.len {
 				mm[built[kids[i]].as_string()] = built[kids[i + 1]]
 				i += 2
 			}
-			return vlip.table(mm)
+			return blip.table(mm)
 		}
 		.array {
-			mut items := []vlip.Value{}
+			mut items := []blip.Value{}
 			mut ki := 0
 			for ki < kids.len {
 				items << built[kids[ki]]
 				ki++
 			}
-			return vlip.Value{
+			return blip.Value{
 				tag: .array
-				payload: &vlip.Vector{
+				payload: &blip.Vector{
 					tag:  .array
 					data: items
 				}
 			}
 		}
 		.buffer {
-			mut mm := map[string]vlip.Value{}
+			mut mm := map[string]blip.Value{}
 			mut i := 0
 			for i + 1 < kids.len {
 				mm[built[kids[i]].as_string()] = built[kids[i + 1]]
 				i += 2
 			}
-			return vlip.buffer(mm)
+			return blip.buffer(mm)
 		}
-		else { return vlip.nil_value() }
+		else { return blip.nil_value() }
 	}
 }
 
@@ -2490,7 +2527,7 @@ fn (mut m Machine) assemble(id vlip.NodeId, kids []vlip.NodeId, built map[vlip.N
 // control state. Without the restore, evaluating an unquote would throw away the
 // continuation frames of the form that contained it, and the macro expansion would
 // return into the wrong place.
-pub fn (mut m Machine) quasi_to_value(id vlip.NodeId) vlip.Value {
+pub fn (mut m Machine) quasi_to_value(id blip.NodeId) blip.Value {
 	d := m.arena.node(id)
 	if d.tag == .unquote || d.tag == .unquote_splice {
 		inner := m.arena.kids(id)[0]
@@ -2498,7 +2535,7 @@ pub fn (mut m Machine) quasi_to_value(id vlip.NodeId) vlip.Value {
 		saved_ctl := m.ctl
 		saved_form := m.form
 		saved_env := m.env
-		out := m.eval_one(inner) or { vlip.nil_value() }
+		out := m.eval_one(inner) or { blip.nil_value() }
 		m.kstack = saved_k
 		m.ctl = saved_ctl
 		m.form = saved_form
@@ -2515,7 +2552,7 @@ pub fn (mut m Machine) quasi_to_value(id vlip.NodeId) vlip.Value {
 // ONE frame for the whole `match`, not one per clause: a per-clause frame would
 // mean a `match` in tail position grew the continuation stack by its clause count
 // on every iteration, which is the same mistake `begin` used to make.
-fn (mut m Machine) eval_match(kids []vlip.NodeId) ! {
+fn (mut m Machine) eval_match(kids []blip.NodeId) ! {
 	if kids.len < 2 {
 		return error('match needs a subject and at least one clause')
 	}
@@ -2536,7 +2573,7 @@ fn (mut m Machine) eval_match(kids []vlip.NodeId) ! {
 // try_clauses walks the clause list from `k.slot`. It is called both when the
 // subject first arrives and after a guard fails, which is why it takes the frame
 // rather than being inlined twice.
-fn (mut m Machine) try_clauses(k vlip.Kont, subject vlip.Value) ! {
+fn (mut m Machine) try_clauses(k blip.Kont, subject blip.Value) ! {
 	mut i := k.slot
 	for i < k.clauses.len {
 		clause := k.clauses[i]
@@ -2546,7 +2583,7 @@ fn (mut m Machine) try_clauses(k vlip.Kont, subject vlip.Value) ! {
 			continue
 		}
 		mut pi := 0
-		mut guard := vlip.NodeId(-1)
+		mut guard := blip.NodeId(-1)
 		if m.arena.node(ckids[0]).tag == .kw && m.arena.node(ckids[0]).value == '#:when' {
 			if ckids.len < 2 {
 				return error('match: #:when needs a test')
@@ -2554,14 +2591,14 @@ fn (mut m Machine) try_clauses(k vlip.Kont, subject vlip.Value) ! {
 			guard = ckids[1]
 			pi = 2
 		}
-		mut pattern := vlip.NodeId(-1)
+		mut pattern := blip.NodeId(-1)
 		if pi < ckids.len {
 			pattern = ckids[pi]
 			pi++
 		}
 		// `else` as a clause head matches everything with no bindings.
 		mut is_else := false
-		if pattern != vlip.NodeId(-1) {
+		if pattern != blip.NodeId(-1) {
 			pd := m.arena.node(pattern)
 			is_else = pd.tag == .sym && pd.value == 'else'
 		}
@@ -2572,7 +2609,7 @@ fn (mut m Machine) try_clauses(k vlip.Kont, subject vlip.Value) ! {
 			res = m.match_pattern(pattern, subject)!
 		}
 		if res.ok {
-			mut body := []vlip.NodeId{}
+			mut body := []blip.NodeId{}
 			mut b := pi
 			for b < ckids.len {
 				body << ckids[b]
@@ -2584,7 +2621,7 @@ fn (mut m Machine) try_clauses(k vlip.Kont, subject vlip.Value) ! {
 				m.envs.define(frame, res.binds[n].name, res.binds[n].val)
 				n++
 			}
-			if guard != vlip.NodeId(-1) {
+			if guard != blip.NodeId(-1) {
 				// A guard is evaluated with the bindings in scope, and a false guard
 				// discards them. They live in their own frame, so "discard" is just
 				// putting `env` back.
@@ -2595,7 +2632,7 @@ fn (mut m Machine) try_clauses(k vlip.Kont, subject vlip.Value) ! {
 				gf.rest = m.make_begin(body)
 				// The subject, so a false guard can carry on with the next clause
 				// without re-evaluating anything.
-				gf.acc = []vlip.Value{}
+				gf.acc = []blip.Value{}
 				gf.acc << subject
 				m.env = frame
 				m.push(gf)
@@ -2608,7 +2645,7 @@ fn (mut m Machine) try_clauses(k vlip.Kont, subject vlip.Value) ! {
 	}
 	// Nothing matched.
 	m.env = k.env
-	m.val = vlip.nil_value()
+	m.val = blip.nil_value()
 	m.ret()
 }
 
@@ -2616,23 +2653,31 @@ fn (mut m Machine) try_clauses(k vlip.Kont, subject vlip.Value) ! {
 // parent, and the body runs under a `seq` frame so that its LAST form is still a
 // tail call. Reusing the `seq` handler rather than writing a second one is the
 // point: `begin` already works out how not to push a frame for the last form.
-fn (mut m Machine) enter_clause_body(frame vlip.EnvId, body vlip.NodeId) ! {
+fn (mut m Machine) enter_clause_body(frame blip.EnvId, body blip.NodeId) ! {
 	bd := m.arena.node(body)
 	if bd.tag != .list {
 		m.env = frame
 		m.goto(body)
 		return
 	}
-	// bkids INCLUDES the head symbol: `(begin A B)` has three children, begin, A,
-	// B. The forms are bkids[1..]. An earlier version compared bkids.len against
-	// the number of FORMS, so a one-form body never matched the single-form
-	// branch and the seq frame was entered at slot 1 pointing at the `begin`
-	// symbol itself -- which was then evaluated and reported "unbound
-	// identifier: begin".
+	// body is make_begin output: either a bare single form or a `begin` node.
+	// A bare form that is itself a list -- `(use (f) (+ r1 r2))`, `(use (f)
+	// (let x 1 x))` -- is NOT a sequence and must not be destructured: the
+	// head is the callee, not `begin`, so the sequence branches below would
+	// evaluate the callee's pieces as expressions. Only a `begin`-headed list
+	// has its head skipped.
 	bkids := m.arena.kids(body)
+	if bkids.len > 0 {
+		head := m.arena.node(bkids[0])
+		if head.tag != .sym || head.value != 'begin' {
+			m.env = frame
+			m.goto(body)
+			return
+		}
+	}
 	if bkids.len <= 1 {
 		m.env = frame
-		m.val = vlip.empty_list()
+		m.val = blip.empty_list()
 		m.ret()
 		return
 	}
@@ -2657,9 +2702,9 @@ fn (mut m Machine) enter_clause_body(frame vlip.EnvId, body vlip.NodeId) ! {
 // pattern is tested -- which is the guarantee Racket's own documentation warns
 // implementers about -- and a clause matches only if EVERY pattern in it does.
 // No new syntax, no new continuation tag.
-fn (mut m Machine) transform_match_star(kids []vlip.NodeId) vlip.NodeId {
+fn (mut m Machine) transform_match_star(kids []blip.NodeId) blip.NodeId {
 	subjects := m.arena.kids(kids[1])
-	mut stmts := []vlip.NodeId{}
+	mut stmts := []blip.NodeId{}
 	// Every subject is passed straight into ONE `(list ...)` call, which is what
 	// makes each exactly-once evaluation: the list is built before the match sees
 	// it, and the match only ever reads it.
@@ -2669,7 +2714,7 @@ fn (mut m Machine) transform_match_star(kids []vlip.NodeId) vlip.NodeId {
 	// "unbound identifier: s_1". The temporaries were never needed -- `(list a b)`
 	// already evaluates each argument once.
 	inner := m.call_node(m.sym_node('list'), subjects)
-	mut clauses := []vlip.NodeId{}
+	mut clauses := []blip.NodeId{}
 	mut c := 2
 	for c < kids.len {
 		ckids := m.arena.kids(kids[c])
@@ -2677,7 +2722,7 @@ fn (mut m Machine) transform_match_star(kids []vlip.NodeId) vlip.NodeId {
 			c++
 			continue
 		}
-		mut body := []vlip.NodeId{}
+		mut body := []blip.NodeId{}
 		mut bi := 1
 		for bi < ckids.len {
 			body << ckids[bi]
@@ -2685,7 +2730,7 @@ fn (mut m Machine) transform_match_star(kids []vlip.NodeId) vlip.NodeId {
 		}
 		// One clause becomes [(list)] whose pattern is (list P1 P2 ...), so each
 		// pattern sees the subject in its own position.
-		mut pat := []vlip.NodeId{}
+		mut pat := []blip.NodeId{}
 		pat << m.sym_node('list')
 		mut p := 0
 		for p < ckids.len {
@@ -2695,7 +2740,7 @@ fn (mut m Machine) transform_match_star(kids []vlip.NodeId) vlip.NodeId {
 		clauses << m.list_of([m.list_of(pat), m.make_begin(body)])
 		c++
 	}
-mut items := []vlip.NodeId{}
+mut items := []blip.NodeId{}
 	items << m.sym_node('match')
 	items << inner
 	mut ci := 0
@@ -2715,7 +2760,7 @@ mut items := []vlip.NodeId{}
 // The subject is bound once and the `match` runs against the temporary, so a
 // VALUE with a side effect is evaluated exactly once even though the transform
 // mentions it twice.
-fn (mut m Machine) transform_let_assert(kids []vlip.NodeId) !vlip.NodeId {
+fn (mut m Machine) transform_let_assert(kids []blip.NodeId) !blip.NodeId {
 	// `(let assert PATTERN VALUE body...)` is a match with no other clause, so a
 	// failure is a hard error naming the pattern instead of falling through to
 	// nil.
@@ -2754,12 +2799,12 @@ fn (mut m Machine) transform_let_assert(kids []vlip.NodeId) !vlip.NodeId {
 // transform would have to guess -- from the number of body forms, which is what
 // the first version did, and `(list-ref r 2)` on a one-element result is what
 // that produced.
-fn (mut m Machine) eval_use(kids []vlip.NodeId) ! {
+fn (mut m Machine) eval_use(kids []blip.NodeId) ! {
 	if kids.len < 2 {
 		return error('use needs a call: (use (f x) body...)')
 	}
 	mut nf := m.kont(.use_k)
-	nf.rest = vlip.NodeId(0)
+	nf.rest = blip.NodeId(0)
 	nf.slot = 0
 	nf.env = m.env
 	nf.clauses = kids
@@ -2770,7 +2815,7 @@ fn (mut m Machine) eval_use(kids []vlip.NodeId) ! {
 // callee_name is the name `use` binds a single result to. `(use (connect "h")
 // body)` binds `conn`; `(use (f) body)` binds `f`. A form that is not a named
 // call has no name, and the caller falls back to positional names.
-fn (m &Machine) callee_name(call vlip.NodeId) string {
+fn (m &Machine) callee_name(call blip.NodeId) string {
 	d := m.arena.node(call)
 	if d.tag == .sym {
 		return d.value
@@ -2813,7 +2858,7 @@ fn (m &Machine) use_name(i int) string {
 // is the whole design, and it is why a macro call is spelled `(macex (f ...))`
 // rather than `(f ...)`: a bare call would have to evaluate its arguments first,
 // which is the one thing a macro exists to avoid.
-fn (mut m Machine) eval_defmacro(kids []vlip.NodeId) ! {
+fn (mut m Machine) eval_defmacro(kids []blip.NodeId) ! {
 	if kids.len < 4 {
 		return error('defmacro needs a name, a parameter list and a body: (defmacro name (args) body)')
 	}
@@ -2825,18 +2870,18 @@ fn (mut m Machine) eval_defmacro(kids []vlip.NodeId) ! {
 	spec := m.parse_params(m.arena.kids(kids[2]), name)!
 	body := m.apply_destructures(spec, m.make_begin(kids[3..]))
 	m.envs.define(m.env, name, m.make_closure(spec, body, m.env, name))
-	m.val = vlip.symbol(name)
+	m.val = blip.symbol(name)
 	m.ret()
 }
 
 // macex1 expands a macro form once and returns whatever came out, macro or not.
-fn (mut m Machine) macex1(n vlip.NodeId) !vlip.Value {
+fn (mut m Machine) macex1(n blip.NodeId) !blip.Value {
 	// The form is turned into a value first and expanded there, so `macex` can
 	// loop on the RESULT -- which is a value -- without converting back and forth.
 	return m.expand_macro_value(m.datum_to_value(n))
 }
 
-fn (m &Machine) is_macro_form(v vlip.Value) bool {
+fn (m &Machine) is_macro_form(v blip.Value) bool {
 	if v.tag != .pair {
 		return false
 	}
@@ -2853,7 +2898,7 @@ fn (m &Machine) is_macro_form(v vlip.Value) bool {
 // is_macro_closure asks whether a closure was made by defmacro. It is recorded as
 // a name in a set rather than guessed from, because a guess would expand every
 // procedure that happens to take a form.
-fn (m &Machine) is_macro_closure(v vlip.Value) bool {
+fn (m &Machine) is_macro_closure(v blip.Value) bool {
 	if v.tag != .closure {
 		return false
 	}
@@ -2867,7 +2912,7 @@ fn (m &Machine) is_macro_closure(v vlip.Value) bool {
 // values -- that is what "unevaluated" means once the reader has run -- so the
 // expansion of one macro can be expanded again without a reader or an arena
 // NodeId anywhere in the loop.
-fn (mut m Machine) expand_macro_value(v vlip.Value) !vlip.Value {
+fn (mut m Machine) expand_macro_value(v blip.Value) !blip.Value {
 	if !m.is_macro_form(v) {
 		return v
 	}
@@ -2884,7 +2929,7 @@ fn (mut m Machine) expand_macro_value(v vlip.Value) !vlip.Value {
 	return m.call_value(macro, args)!
 }
 
-fn (mut m Machine) macex(n vlip.NodeId) !vlip.Value {
+fn (mut m Machine) macex(n blip.NodeId) !blip.Value {
 	mut v := m.macex1(n)!
 	mut i := 0
 	// Eight rounds is a bound, not a hope: a macro that expands to itself would
@@ -2906,14 +2951,14 @@ fn (mut m Machine) macex(n vlip.NodeId) !vlip.Value {
 // struct => a constructor, a predicate, an accessor per field, and (when mutable)
 // a setter per field.
 //
-// It works by generating a few definitions in vlip source and evaluating them in
+// It works by generating a few definitions in blip source and evaluating them in
 // THIS machine. That looks roundabout next to building closures by hand, and it
-// is the right trade for two reasons: a vlip Closure needs an arena NodeId for its
+// is the right trade for two reasons: a blip Closure needs an arena NodeId for its
 // body, so building one by hand means synthesising source text anyway; and a
 // primitive that takes a machine cannot be expressed in the prims table at all.
 // The definitions land in the current frame, so `(define (f p) (point-x p))` can
 // see `point-x` -- a struct you cannot name from another function is not a type.
-fn (mut m Machine) eval_struct(kids []vlip.NodeId) ! {
+fn (mut m Machine) eval_struct(kids []blip.NodeId) ! {
 	if kids.len < 3 {
 		return error('struct needs a name and a field list: (struct Name (f1 f2))')
 	}
@@ -2981,7 +3026,7 @@ fn (mut m Machine) eval_struct(kids []vlip.NodeId) ! {
 	m.eval_string_lenient(src) or {
 		return error('struct ${name}: the generated definitions failed: ${err.msg()}')
 	}
-	m.val = vlip.symbol(name)
+	m.val = blip.symbol(name)
 	m.ret()
 }
 
@@ -3033,7 +3078,7 @@ fn (m &Machine) already_loaded(path string) bool {
 	return path in m.loaded
 }
 
-fn (mut m Machine) eval_require(kids []vlip.NodeId) ! {
+fn (mut m Machine) eval_require(kids []blip.NodeId) ! {
 	mut paths := []string{}
 	// kids[0] is the `require` symbol itself. Scanning it as a clause is how the
 	// first version reported "require is not a file path" on a perfectly good
@@ -3065,7 +3110,7 @@ fn (mut m Machine) eval_require(kids []vlip.NodeId) ! {
 		}
 		k++
 	}
-	m.val = vlip.nil_value()
+	m.val = blip.nil_value()
 	m.ret()
 }
 
@@ -3078,7 +3123,7 @@ fn (mut m Machine) eval_require(kids []vlip.NodeId) ! {
 // comment. It RETURNS the list rather than appending to one the caller passed,
 // because a `mut []string` parameter is awkward in V and this is the whole
 // function.
-fn (m &Machine) require_paths(n vlip.NodeId) []string {
+fn (m &Machine) require_paths(n blip.NodeId) []string {
 	d := m.arena.node(n)
 	if d.tag == .str {
 		return [d.value]
@@ -3109,7 +3154,7 @@ fn (m &Machine) require_paths(n vlip.NodeId) []string {
 // It is compiled into a `match` over a temporary, because destructuring is what
 // the pattern matcher already knows how to do and writing a second binder for
 // lists, tables and structs would be three implementations to keep in step.
-pub fn (mut m Machine) transform_let(kids []vlip.NodeId) !vlip.NodeId {
+pub fn (mut m Machine) transform_let(kids []blip.NodeId) !blip.NodeId {
 	// `(let assert PATTERN VALUE body...)` is `let` with the word `assert` in the
 	// binding slot. It is read here rather than as its own head symbol so that
 	// `(let assert ...)` needs no reader change and so that a program can use
@@ -3139,8 +3184,8 @@ pub fn (mut m Machine) transform_let(kids []vlip.NodeId) !vlip.NodeId {
 	// So the values are bound by ONE lambda, plain names and destructuring
 	// temporaries alike, and the destructuring happens in nested lets INSIDE the
 	// body where the temporaries are already bound.
-	mut params := []vlip.NodeId{}
-	mut args := []vlip.NodeId{}
+	mut params := []blip.NodeId{}
+	mut args := []blip.NodeId{}
 	mut destructures := []Destructure{}
 	mut i := 0
 	for i < binds.len {
@@ -3160,8 +3205,8 @@ pub fn (mut m Machine) transform_let(kids []vlip.NodeId) !vlip.NodeId {
 	}
 	mut dgroups := []Group{}
 	for d in destructures {
-		mut names := []vlip.NodeId{}
-		mut vals := []vlip.NodeId{}
+		mut names := []blip.NodeId{}
+		mut vals := []blip.NodeId{}
 		for p in d.parts {
 			names << p.name
 			vals << p.accessor
@@ -3180,13 +3225,13 @@ pub fn (mut m Machine) transform_let(kids []vlip.NodeId) !vlip.NodeId {
 // these rather than one wide lambda because destructuring needs a scope per step.
 pub struct Group {
 pub mut:
-	params []vlip.NodeId
-	args   []vlip.NodeId
+	params []blip.NodeId
+	args   []blip.NodeId
 }
 
 // nest_lets builds the lambda nest, putting the body LAST so that the body stays
 // in tail position at every level.
-fn (mut m Machine) nest_lets(groups []Group, body []vlip.NodeId) vlip.NodeId {
+fn (mut m Machine) nest_lets(groups []Group, body []blip.NodeId) blip.NodeId {
 	if groups.len == 0 {
 		return m.make_begin(body)
 	}
@@ -3199,8 +3244,8 @@ fn (mut m Machine) nest_lets(groups []Group, body []vlip.NodeId) vlip.NodeId {
 // that produces it.
 pub struct Destructured {
 pub mut:
-	name     vlip.NodeId
-	accessor vlip.NodeId
+	name     blip.NodeId
+	accessor blip.NodeId
 }
 
 // destructuring expands a binding pattern into names and accessor expressions.
@@ -3216,7 +3261,7 @@ pub mut:
 //
 // Accessors rather than a match also means a destructuring binding costs nothing
 // at run time and cannot fail at run time, which is what a binding should be.
-pub fn (mut m Machine) destructuring(pattern vlip.NodeId, value vlip.NodeId) ![]Destructured {
+pub fn (mut m Machine) destructuring(pattern blip.NodeId, value blip.NodeId) ![]Destructured {
 	d := m.arena.node(pattern)
 	if d.tag == .sym {
 		if d.value == '_' {
@@ -3330,13 +3375,13 @@ pub fn (mut m Machine) destructuring(pattern vlip.NodeId, value vlip.NodeId) ![]
 //	>= 0  body[slot] has just finished
 //	-1    #:finally has just finished -- return val2
 //	-3    the catch clause has just finished -- run #:finally, or return val2
-fn (mut m Machine) eval_try(kids []vlip.NodeId) ! {
+fn (mut m Machine) eval_try(kids []blip.NodeId) ! {
 	if kids.len < 2 {
 		return error('try needs a body')
 	}
-	mut body := []vlip.NodeId{}
-	mut catch := vlip.no_node
-	mut finally := vlip.no_node
+	mut body := []blip.NodeId{}
+	mut catch := blip.no_node
+	mut finally := blip.no_node
 	mut i := 1
 	for i < kids.len {
 		d := m.arena.node(kids[i])
@@ -3373,8 +3418,8 @@ fn (mut m Machine) eval_try(kids []vlip.NodeId) ! {
 
 // try_finish is the tail of a `try` in every state: `#:finally` runs at most
 // once, and whatever it evaluates is discarded in favour of the pending result.
-fn (mut m Machine) try_finish(k vlip.Kont, run_finally bool) !bool {
-	if run_finally && k.rest != vlip.no_node {
+fn (mut m Machine) try_finish(k blip.Kont, run_finally bool) !bool {
+	if run_finally && k.rest != blip.no_node {
 		mut k2 := k
 		k2.slot = -1
 		m.push(k2)
@@ -3390,7 +3435,7 @@ fn (mut m Machine) try_finish(k vlip.Kont, run_finally bool) !bool {
 // try_caught matches the error value against the catch clause and then finishes.
 // The `try` frame is kept UNDER the match frame, so when the match body returns
 // the frame is waiting in state -3 and runs `#:finally` itself.
-fn (mut m Machine) try_caught(k vlip.Kont) ! {
+fn (mut m Machine) try_caught(k blip.Kont) ! {
 	mut cf := m.kont(.match_k)
 	cf.env = k.env
 	cf.slot = 0
@@ -3402,11 +3447,11 @@ fn (mut m Machine) try_caught(k vlip.Kont) ! {
 	m.ret()
 }
 
-fn (m &Machine) empty_collection(id vlip.NodeId) vlip.Value {
+fn (m &Machine) empty_collection(id blip.NodeId) blip.Value {
 	if m.arena.node(id).tag == .table {
-		return vlip.table({})
+		return blip.table({})
 	}
-	return vlip.vector([]vlip.Value{})
+	return blip.vector([]blip.Value{})
 }
 
 // eval_collection evaluates the elements of a vector, table or array literal.
@@ -3418,7 +3463,7 @@ fn (m &Machine) empty_collection(id vlip.NodeId) vlip.Value {
 //
 // `collect_k` walks the elements left to right, so a literal costs one frame per
 // element and the last element is still in tail position.
-fn (mut m Machine) eval_collection(id vlip.NodeId) ! {
+fn (mut m Machine) eval_collection(id blip.NodeId) ! {
 	ekids := m.arena.kids(id)
 	if ekids.len == 0 {
 		m.val = m.empty_collection(id)
@@ -3429,7 +3474,7 @@ fn (mut m Machine) eval_collection(id vlip.NodeId) ! {
 	cf.rest = id
 	cf.expr = id
 	cf.slot = 0
-	cf.acc = []vlip.Value{}
+	cf.acc = []blip.Value{}
 	cf.env = m.env
 	m.push(cf)
 	m.goto(ekids[0])
@@ -3441,15 +3486,15 @@ fn (mut m Machine) eval_collection(id vlip.NodeId) ! {
 // Evaluating a key would make `{:host target}` look up a variable named `host`,
 // and it would make the obvious spelling of a table unusable. Quote the table
 // instead if a key really is a variable.
-fn (mut m Machine) build_collection(id vlip.NodeId, items []vlip.Value) !vlip.Value {
+fn (mut m Machine) build_collection(id blip.NodeId, items []blip.Value) !blip.Value {
 	tag := m.arena.node(id).tag
 	if tag == .vector || tag == .array {
-		return vlip.vector(items)
+		return blip.vector(items)
 	}
 	if items.len % 2 != 0 {
 		return error('a table literal needs an even number of elements, got ${items.len}')
 	}
-	mut pairs := map[string]vlip.Value{}
+	mut pairs := map[string]blip.Value{}
 	mut i := 0
 	for i + 1 < items.len {
 		key := items[i]
@@ -3464,15 +3509,15 @@ fn (mut m Machine) build_collection(id vlip.NodeId, items []vlip.Value) !vlip.Va
 		i += 2
 	}
 	if tag == .buffer {
-		return vlip.buffer(pairs)
+		return blip.buffer(pairs)
 	}
-	return vlip.table(pairs)
+	return blip.table(pairs)
 }
 
 // is_destructuring reports whether a binding form's left side is a PATTERN rather
 // than a name. `((list a b) value)` and `({:kind k} value)` destructure; `[a 1]`
 // and `(a 1)` bind one name.
-pub fn (m &Machine) is_destructuring(b vlip.NodeId) bool {
+pub fn (m &Machine) is_destructuring(b blip.NodeId) bool {
 	if !m.is_binding_form(b) {
 		return false
 	}
@@ -3485,7 +3530,7 @@ pub fn (m &Machine) is_destructuring(b vlip.NodeId) bool {
 }
 
 // binding_pattern is the left side of a destructuring binding.
-pub fn (m &Machine) binding_pattern(b vlip.NodeId) vlip.NodeId {
+pub fn (m &Machine) binding_pattern(b blip.NodeId) blip.NodeId {
 	return m.arena.kids(b)[0]
 }
 
@@ -3495,7 +3540,7 @@ pub fn (m &Machine) binding_pattern(b vlip.NodeId) vlip.NodeId {
 // rather than a fall-through. That is the difference between `let` and `let assert`
 // in the examples, and making it an error here means the destructuring case does
 // not need a second implementation.
-pub fn (mut m Machine) match_clause(subject vlip.NodeId, pattern vlip.NodeId) vlip.NodeId {
+pub fn (mut m Machine) match_clause(subject blip.NodeId, pattern blip.NodeId) blip.NodeId {
 	fail := m.node_of('error', [m.string_node('pattern did not match'), m.call_node(
 		m.sym_node('format'), [m.string_node('~a does not match ~a'), subject, pattern])])
 	return m.node_of('match', [subject, m.list_of([pattern, m.sym_node('nil')]),
@@ -3511,19 +3556,19 @@ pub fn (mut m Machine) match_clause(subject vlip.NodeId, pattern vlip.NodeId) vl
 // `(let ([b (+ a 1)]) b)`, whose `a` is then genuinely unbound in the enclosing
 // scope. That is why the failure read as "unbound identifier: a" and was
 // misdiagnosed for a while as the `[...]`-in-two-positions problem.
-pub fn (mut m Machine) transform_let_star(kids []vlip.NodeId) vlip.NodeId {
+pub fn (mut m Machine) transform_let_star(kids []blip.NodeId) blip.NodeId {
 	return m.transform_let_star_at(kids, 0)
 }
 
-fn (mut m Machine) transform_let_star_at(kids []vlip.NodeId, binds_at int) vlip.NodeId {
+fn (mut m Machine) transform_let_star_at(kids []blip.NodeId, binds_at int) blip.NodeId {
 	binds := m.arena.kids(kids[1])
 	if binds_at >= binds.len {
 		return m.make_begin(kids[2..])
 	}
 	inner := m.transform_let_star_at(kids, binds_at + 1)
-	mut one := []vlip.NodeId{}
+	mut one := []blip.NodeId{}
 	one << binds[binds_at]
-	mut items := []vlip.NodeId{}
+	mut items := []blip.NodeId{}
 	items << m.sym_node('let')
 	items << m.list_of(one)
 	items << inner
@@ -3543,7 +3588,7 @@ fn (mut m Machine) transform_let_star_at(kids []vlip.NodeId, binds_at int) vlip.
 // exist: `(letrec ([e ...] [o ...]) ...)` failed with "cannot set unbound
 // identifier" unless `e` happened to be defined globally first, and it leaked
 // every letrec binding into the global frame.
-pub fn (mut m Machine) transform_letrec(kids []vlip.NodeId) vlip.NodeId {
+pub fn (mut m Machine) transform_letrec(kids []blip.NodeId) blip.NodeId {
 	binds := m.arena.kids(kids[1])
 	if binds.len == 0 {
 		return m.make_begin(kids[2..])
@@ -3551,11 +3596,11 @@ pub fn (mut m Machine) transform_letrec(kids []vlip.NodeId) vlip.NodeId {
 	nilq := m.arena.open(.quoted)
 	m.arena.finish(nilq, [m.nil_node()])
 
-	mut params := []vlip.NodeId{}
-	mut stmts := []vlip.NodeId{}
-	mut holes := []vlip.NodeId{}
+	mut params := []blip.NodeId{}
+	mut stmts := []blip.NodeId{}
+	mut holes := []blip.NodeId{}
 	// An index loop, not `for b in binds`: V 0.5.2 emits an unresolved `NodeId`
-	// in the generated C for a range loop over a []vlip.NodeId, so the alias
+	// in the generated C for a range loop over a []blip.NodeId, so the alias
 	// from another module has to be indexed by hand to compile.
 	mut idx := 0
 	for idx < binds.len {
@@ -3576,8 +3621,8 @@ mut bi := 2
 }
 
 // cond => nested ifs.
-pub fn (mut m Machine) transform_cond(kids []vlip.NodeId) vlip.NodeId {
-	mut items := []vlip.NodeId{}
+pub fn (mut m Machine) transform_cond(kids []blip.NodeId) blip.NodeId {
+	mut items := []blip.NodeId{}
 	mut ci := 1
 	for ci < kids.len {
 		items << kids[ci]
@@ -3586,7 +3631,7 @@ pub fn (mut m Machine) transform_cond(kids []vlip.NodeId) vlip.NodeId {
 	return m.cond_from(items)
 }
 
-fn (mut m Machine) cond_from(items []vlip.NodeId) vlip.NodeId {
+fn (mut m Machine) cond_from(items []blip.NodeId) blip.NodeId {
 	if items.len == 0 {
 		return m.nil_node()
 	}
@@ -3618,7 +3663,7 @@ fn (mut m Machine) cond_from(items []vlip.NodeId) vlip.NodeId {
 		// (cond (test => proc)) => (let ([f proc]) (if test (f) rest))
 		f := m.sym_node('__cond_f')
 		rest := m.cond_from(items[1..])
-		body := m.node_of('if', [clause[0], m.call_node(f, []vlip.NodeId{}), rest])
+		body := m.node_of('if', [clause[0], m.call_node(f, []blip.NodeId{}), rest])
 		// The lambda's PARAMETER list is (f). The binding form (f proc) is what
 		// goes through `let`, not what a lambda takes.
 		lam := m.node_of('lambda', [m.list_of([f]), body])
@@ -3629,9 +3674,9 @@ fn (mut m Machine) cond_from(items []vlip.NodeId) vlip.NodeId {
 }
 
 // case => cond with `=` against the subject.
-pub fn (mut m Machine) transform_case(kids []vlip.NodeId) vlip.NodeId {
+pub fn (mut m Machine) transform_case(kids []blip.NodeId) blip.NodeId {
 subject := kids[1]
-	mut items := []vlip.NodeId{}
+	mut items := []blip.NodeId{}
 	mut ci := 2
 	for ci < kids.len {
 		clause := m.arena.kids(kids[ci])
@@ -3679,7 +3724,7 @@ subject := kids[1]
 // (let ([name init]) body...), and transform_let_at already builds the lambda
 // application. Binding the name in the new frame is what makes the body able to
 // refer to itself.
-pub fn (mut m Machine) transform_loop(kids []vlip.NodeId) vlip.NodeId {
+pub fn (mut m Machine) transform_loop(kids []blip.NodeId) blip.NodeId {
 	// (loop name init test body...) has a DIFFERENT shape from let -- the name
 	// and init are separate arguments, not a binding list -- so it cannot share
 	// let's transform.
@@ -3708,7 +3753,7 @@ pub fn (mut m Machine) transform_loop(kids []vlip.NodeId) vlip.NodeId {
 	// transform runs the body exactly once and returns. Both go at the end of
 	// the body, and the call is in tail position of the lambda, so TCO still
 	// holds: a million iterations use one frame.
-	mut stmts := []vlip.NodeId{}
+	mut stmts := []blip.NodeId{}
 	mut bi := 4
 	for bi < kids.len {
 		stmts << kids[bi]
@@ -3730,7 +3775,7 @@ pub fn (mut m Machine) transform_loop(kids []vlip.NodeId) vlip.NodeId {
 }
 
 // dotimes => (loop i 0 (< i n) body...)
-pub fn (mut m Machine) transform_dotimes(kids []vlip.NodeId) !vlip.NodeId {
+pub fn (mut m Machine) transform_dotimes(kids []blip.NodeId) !blip.NodeId {
 	if kids.len < 3 {
 		return error('dotimes needs a loop variable and a count')
 	}
@@ -3739,7 +3784,7 @@ pub fn (mut m Machine) transform_dotimes(kids []vlip.NodeId) !vlip.NodeId {
 		return error('dotimes needs a symbol as its loop variable, got ${printer.write_datum(m.arena, kids[1])}')
 	}
 	lt := m.call_node(m.sym_node('<'), [kids[1], kids[2]])
-	mut items := []vlip.NodeId{}
+	mut items := []blip.NodeId{}
 	items << kids[1]
 	items << m.int_node(0)
 	items << lt
@@ -3755,16 +3800,16 @@ pub fn (mut m Machine) transform_dotimes(kids []vlip.NodeId) !vlip.NodeId {
 // head of (name expr). A lambda parameter list needs the NAME, not the form, so
 // let has to map each binding through this before building its lambda.
 //
-// vlip accepts both (name expr) and [name expr] as the binding form, because
+// blip accepts both (name expr) and [name expr] as the binding form, because
 // `[...]` is a VECTOR here and the documentation and examples write it that way.
 // Checking only for `.list` silently passed the whole vector through as a
 // parameter name, which surfaced as "lambda parameters must be symbols".
-fn (mut m Machine) is_binding_form(b vlip.NodeId) bool {
+fn (mut m Machine) is_binding_form(b blip.NodeId) bool {
 	tag := m.arena.node(b).tag
 	return tag == .list || tag == .vector
 }
 
-pub fn (mut m Machine) binding_name(b vlip.NodeId) vlip.NodeId {
+pub fn (mut m Machine) binding_name(b blip.NodeId) blip.NodeId {
 	if m.is_binding_form(b) {
 		k := m.arena.kids(b)
 		if k.len > 0 {
@@ -3776,7 +3821,7 @@ pub fn (mut m Machine) binding_name(b vlip.NodeId) vlip.NodeId {
 
 
 // binding_value extracts the value expression of a binding form.
-pub fn (mut m Machine) binding_value(b vlip.NodeId) vlip.NodeId {
+pub fn (mut m Machine) binding_value(b blip.NodeId) blip.NodeId {
 	if m.is_binding_form(b) {
 		k := m.arena.kids(b)
 		if k.len > 1 {

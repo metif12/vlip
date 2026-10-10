@@ -2,7 +2,7 @@ module repl
 
 // The REPL: one persistent machine, reading through a Host.
 //
-// It lives in the library rather than in vlip.v for one reason -- every behaviour
+// It lives in the library rather than in blip.v for one reason -- every behaviour
 // worth testing here needs a Host, and without the interface that means a
 // subprocess and a scraped stdout. With it, the whole REPL can be driven from a
 // test by handing it lines and reading back what it printed.
@@ -20,11 +20,11 @@ module repl
 //   * `,l` loads a file into the RUNNING machine, so a definition made in the
 //     REPL is still there afterwards and one made in the file is there before.
 
-import vlib.vlip
-import vlib.vlip.host
-import vlib.vlip.machine
-import vlib.vlip.printer
-import vlib.vlip.reader
+import vlib.blip
+import vlib.blip.host
+import vlib.blip.machine
+import vlib.blip.printer
+import vlib.blip.reader
 
 pub struct Repl {
 pub mut:
@@ -57,18 +57,18 @@ pub fn new_with_machine(m &machine.Machine, h host.Host) &Repl {
 	}
 }
 
-// prompt shows how deep the current form is. It is `vlip:1> ` at the top level
-// and `vlip:2> ` while a bracket is open, which is the difference between "my
+// prompt shows how deep the current form is. It is `blip:1> ` at the top level
+// and `blip:2> ` while a bracket is open, which is the difference between "my
 // program is stuck" and "the REPL is waiting for me to type another line".
 pub fn prompt(buffer string) string {
 	d := reader.depth(buffer)
 	if d.n > 0 {
-		return 'vlip:${d.n + 1}> '
+		return 'blip:${d.n + 1}> '
 	}
 	if d.in_string {
-		return 'vlip"> '
+		return 'blip"> '
 	}
-	return 'vlip:1> '
+	return 'blip:1> '
 }
 
 // is_open reports whether the buffer is waiting for more input. It is the same
@@ -127,6 +127,7 @@ fn (mut r Repl) evaluate(src string) !int {
 		r.host.host_print('${d.line}:${d.col}: ${d.msg}')
 		return 0
 	}
+	r.machine.src_text = src
 	res := r.machine.arena.read_forms(src)
 	mut n := 0
 	mut i := 0
@@ -134,8 +135,6 @@ fn (mut r Repl) evaluate(src string) !int {
 		v := r.machine.eval_one(res.forms[i]) or {
 			r.host.host_print('error: ${err.msg()}')
 			i++
-			// A form that fails does not abort the ones after it. That is the
-			// whole difference between a REPL and `vlip run`.
 			continue
 		}
 		if !r.quiet {
@@ -193,7 +192,7 @@ fn (mut r Repl) load_path(path string) {
 
 // run is the read-eval-print loop. It returns the process exit code.
 pub fn (mut r Repl) run() int {
-	r.host.host_print('vlip 0.1.0 -- ,h for commands, ,q to leave')
+	r.host.host_print('blip 0.1.0 -- ,h for commands, ,q to leave')
 	for {
 		r.host.host_write(prompt(r.buffer))
 		line := r.host.host_read_line() or {

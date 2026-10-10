@@ -8,7 +8,7 @@
   "ui.tryIt": "Lire la documentation",
   "ui.source": "Code source",
   "ui.untranslated": "Cette section n'est pas encore traduite dans votre langue ; elle est affichee en anglais. Les traductions sont bienvenues.",
-  "ui.footer": "vlip est un dialecte de Lisp ecrit en V. Precoce, et honnete sur ce qui ne fonctionne pas encore.",
+  "ui.footer": "blip est un dialecte de Lisp ecrit en V. Precoce, et honnete sur ce qui ne fonctionne pas encore.",
   "home.title": "Un Lisp pour V, avec des appels de queue vraiment gratuits",
   "home.sub": "Un petit dialecte de Lisp sur une machine CEK explicite. Un appel en position de queue reutilise sa frame au lieu d'en empiler une, donc une boucle est une boucle et non une pile qui grossit jusqu'a la mort.",
   "home.pillars": "Ce que c'est",

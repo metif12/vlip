@@ -1,0 +1,365 @@
+;; programs/json.lip -- JSON parse + emit in blip.
+;;
+;; Second on the roadmap's program list, after Brainfuck, and the first that
+;; earns its place through failure: every malformed input returns an `(err ...)`
+;; value instead of aborting, so a bad document is ordinary control flow and
+;; `use` is the error propagation story. Nothing on the parse path raises.
+;;
+;; Values: objects become tables with string keys, arrays become vectors,
+;; strings/numbers/booleans map to themselves, null is nil. Positions are
+;; integer indexes; every parse function returns `(ok value pos)` or
+;; `(err reason pos)`.
+;;
+;; Indexes count bytes and only ASCII is handled structurally: the delimiters
+;; are all ASCII, and a multibyte character inside a string value passes through
+;; byte by byte, which round-trips exactly. \u escapes above U+00FF go through
+;; `code->string`, which UTF-8-encodes them.
+
+;; --- positions ---
+
+;; json-code is the byte at `pos`, or -1 past the end. One place, so the
+;; past-the-end rule cannot drift between callers.
+(define (json-code text pos)
+  (if (>= pos (length text))
+    -1
+    (rune->integer (string->rune (string-slice text pos (+ pos 1))))))
+
+(define (json-space? code)
+  (or (= code 32) (= code 9) (= code 10) (= code 13)))
+
+(define (json-skip-ws text pos)
+  (if (json-space? (json-code text pos))
+    (json-skip-ws text (+ pos 1))
+    pos))
+
+(define (json-digit? code)
+  (and (>= code 48) (<= code 57)))
+
+;; --- strings ---
+
+(define (json-hex code)
+  (cond [(and (>= code 48) (<= code 57)) (- code 48)]
+        [(and (>= code 97) (<= code 102)) (+ (- code 97) 10)]
+        [(and (>= code 65) (<= code 70)) (+ (- code 65) 10)]
+        [else -1]))
+
+;; json-unicode reads four hex digits at `pos`: (ok code pos-after).
+(define (json-unicode text pos)
+  (let d1 (json-hex (json-code text pos))
+    (let d2 (json-hex (json-code text (+ pos 1)))
+      (let d3 (json-hex (json-code text (+ pos 2)))
+        (let d4 (json-hex (json-code text (+ pos 3)))
+          (if (or (< d1 0) (< d2 0) (< d3 0) (< d4 0))
+            (err 'bad-unicode pos)
+            (ok (+ (* d1 4096) (* d2 256) (* d3 16) d4) (+ pos 4))))))))
+
+;; json-escape resolves the escape at `pos` (just past the backslash),
+;; pushing the decoded character and continuing the string.
+(define (json-escape text pos acc)
+  (let code (json-code text pos)
+    (cond [(= code 34) (json-string-tail text (+ pos 1) (array-push! acc "\""))]
+          [(= code 92) (json-string-tail text (+ pos 1) (array-push! acc "\\"))]
+          [(= code 47) (json-string-tail text (+ pos 1) (array-push! acc "/"))]
+          [(= code 98) (json-string-tail text (+ pos 1) (array-push! acc (code->string 8)))]
+          [(= code 102) (json-string-tail text (+ pos 1) (array-push! acc (code->string 12)))]
+          [(= code 110) (json-string-tail text (+ pos 1) (array-push! acc "\n"))]
+          [(= code 114) (json-string-tail text (+ pos 1) (array-push! acc "\r"))]
+          [(= code 116) (json-string-tail text (+ pos 1) (array-push! acc "\t"))]
+          [(= code 117) (use (json-unicode text (+ pos 1))
+                          (json-string-tail text r2 (array-push! acc (code->string r1))))]
+          [else (err 'bad-escape pos)])))
+
+;; json-string-tail walks from `pos` (just past the opening quote),
+;; collecting one-character strings into `acc`, until the closing quote.
+;; The accumulator plus one join keeps this linear rather than quadratic.
+(define (json-string-tail text pos acc)
+  (let code (json-code text pos)
+    (cond [(= code -1) (err 'unterminated-string pos)]
+          [(= code 34) (ok (string-join acc "") (+ pos 1))]
+          [(= code 92) (json-escape text (+ pos 1) acc)]
+          [(< code 32) (err 'control-char pos)]
+          [else (json-string-tail text (+ pos 1)
+                  (array-push! acc (string-slice text pos (+ pos 1))))])))
+
+(define (json-parse-string text pos)
+  (json-string-tail text (+ pos 1) (vector)))
+
+;; --- numbers ---
+;;
+;; Grammar: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)? -- checked by hand
+;; because `string->number` answers nil for garbage instead of saying where,
+;; and "where" is what an (err reason pos) owes its caller.
+
+(define (json-numchar? code)
+  (or (= code 45) (= code 43) (= code 46)
+      (= code 101) (= code 69)
+      (json-digit? code)))
+
+(define (json-scan-number text pos)
+  (if (json-numchar? (json-code text pos))
+    (json-scan-number text (+ pos 1))
+    pos))
+
+;; json-digits1 skips one or more digits, or -1 when there are none.
+(define (json-digits1 token pos end)
+  (if (or (>= pos end) (not (json-digit? (json-code token pos))))
+    -1
+    (json-digits token (+ pos 1) end)))
+
+(define (json-digits token pos end)
+  (if (or (>= pos end) (not (json-digit? (json-code token pos))))
+    pos
+    (json-digits token (+ pos 1) end)))
+
+(define (json-int-start token end)
+  (let p (if (= (json-code token 0) 45) 1 0)
+    (if (>= p end)
+      -1
+      (if (= (json-code token p) 48)
+        (+ p 1)
+        (json-digits1 token p end)))))
+
+(define (json-frac-part token pos end)
+  (if (or (>= pos end) (not= (json-code token pos) 46))
+    pos
+    (json-digits1 token (+ pos 1) end)))
+
+(define (json-e? code)
+  (or (= code 101) (= code 69)))
+
+(define (json-exp-part token pos end)
+  (if (or (>= pos end) (not (json-e? (json-code token pos))))
+    pos
+    (let q (+ pos 1)
+      (let r (if (or (= (json-code token q) 43) (= (json-code token q) 45))
+               (+ q 1)
+               q)
+        (json-digits1 token r end)))))
+
+(define (json-valid-number? token)
+  (let end (string-length token)
+    (let p1 (json-int-start token end)
+      (if (< p1 0)
+        #f
+        (let p2 (json-frac-part token p1 end)
+          (if (< p2 0)
+            #f
+            (= (json-exp-part token p2 end) end)))))))
+
+(define (json-parse-number text pos)
+  (let end (json-scan-number text pos)
+    (let token (string-slice text pos end)
+      (if (json-valid-number? token)
+        (let n (string->number token)
+          (if (nil? n)
+            (err 'bad-number pos)
+            (ok n end)))
+        (err 'bad-number pos)))))
+
+;; --- literals ---
+
+(define (json-word? text pos word)
+  (let end (+ pos (string-length word))
+    (if (> end (string-length text))
+      #f
+      (= (string-slice text pos end) word))))
+
+(define (json-parse-literal text pos)
+  (cond [(json-word? text pos "true") (ok #t (+ pos 4))]
+        [(json-word? text pos "false") (ok #f (+ pos 5))]
+        [(json-word? text pos "null") (ok nil (+ pos 4))]
+        [else (err 'unexpected-char pos)]))
+
+;; --- arrays ---
+
+(define (json-parse-array text pos)
+  (json-array-items text (+ pos 1) (vector) #t))
+
+;; `first?` is whether `]` may close the array here: it may for `[] but not
+;; after a comma, where `[1,]` must fail rather than parse as `[1]`.
+(define (json-array-items text pos acc first?)
+  (let p (json-skip-ws text pos)
+    (if (and first? (= (json-code text p) 93))
+      (ok acc (+ p 1))
+      (use (json-parse-value text p)
+        (let q (json-skip-ws text r2)
+          (cond [(= (json-code text q) 44)
+                 (json-array-items text (+ q 1) (array-push! acc r1) #f)]
+                [(= (json-code text q) 93)
+                 (ok (array-push! acc r1) (+ q 1))]
+                [else (err 'expected-comma-or-bracket q)]))))))
+
+;; --- objects ---
+;;
+;; The nested `use` rebinds r1/r2, so the key is stashed in a `let` first:
+;; lexical bindings survive what `use` rebinds.
+
+(define (json-parse-object text pos)
+  (json-object-items text (+ pos 1) {} #t))
+
+;; `first?` is whether `}` may close the object here: it may for `{}` but not
+;; after a comma, where `{"a":1,}` must fail rather than parse as `{"a":1}`.
+(define (json-object-items text pos acc first?)
+  (let p (json-skip-ws text pos)
+    (if (and first? (= (json-code text p) 125))
+      (ok acc (+ p 1))
+      (if (not= (json-code text p) 34)
+        (err 'expected-string-key p)
+        (use (json-parse-string text p)
+          (let key r1
+            (let q (json-skip-ws text r2)
+              (if (not= (json-code text q) 58)
+                (err 'expected-colon q)
+                (use (json-parse-value text (json-skip-ws text (+ q 1)))
+                  (let v r1
+                    (let r (json-skip-ws text r2)
+                      (cond [(= (json-code text r) 44)
+                             (json-object-items text (+ r 1) (put acc key v) #f)]
+                            [(= (json-code text r) 125)
+                             (ok (put acc key v) (+ r 1))]
+                            [else (err 'expected-comma-or-brace r)]))))))))))))
+
+;; --- values + entry ---
+
+(define (json-parse-value text pos)
+  (let p (json-skip-ws text pos)
+    (let code (json-code text p)
+      (cond [(= code 123) (json-parse-object text p)]
+            [(= code 91) (json-parse-array text p)]
+            [(= code 34) (json-parse-string text p)]
+            [(= code 116) (json-parse-literal text p)]
+            [(= code 102) (json-parse-literal text p)]
+            [(= code 110) (json-parse-literal text p)]
+            [(= code 45) (json-parse-number text p)]
+            [(json-digit? code) (json-parse-number text p)]
+            [(= code -1) (err 'unexpected-end p)]
+            [else (err 'unexpected-char p)]))))
+
+(define (json-parse text)
+  (use (json-parse-value text 0)
+    (let end (json-skip-ws text r2)
+      (if (= end (string-length text))
+        (ok r1)
+        (err 'trailing-garbage end)))))
+
+;; --- emit ---
+
+(define json-hex-digits "0123456789abcdef")
+
+(define (json-hex2 code)
+  (string-append (string-slice json-hex-digits (/ code 16) (+ (/ code 16) 1))
+                 (string-slice json-hex-digits (modulo code 16) (+ (modulo code 16) 1))))
+
+(define (json-piece ch code)
+  (cond [(= code 34) "\\\""]
+        [(= code 92) "\\\\"]
+        [(= code 10) "\\n"]
+        [(= code 9) "\\t"]
+        [(= code 13) "\\r"]
+        [(= code 8) "\\b"]
+        [(= code 12) "\\f"]
+        [(< code 32) (string-append "\\u00" (json-hex2 code))]
+        [else ch]))
+
+(define (json-string-pieces s i acc)
+  (if (>= i (string-length s))
+    (array-push! acc "\"")
+    (let ch (string-slice s i (+ i 1))
+      (let code (rune->integer (string->rune ch))
+        (json-string-pieces s (+ i 1) (array-push! acc (json-piece ch code)))))))
+
+(define (json-emit-string s)
+  (string-join (json-string-pieces s 0 (array-push! (vector) "\"")) ""))
+
+(define (json-emit-items v i acc)
+  (if (>= i (length v))
+    acc
+    (json-emit-items v (+ i 1) (array-push! acc (json-emit (vector-ref v i))))))
+
+(define (json-emit-array v)
+  (string-append "[" (string-append (string-join (json-emit-items v 0 (vector)) ",") "]")))
+
+;; table-keys answers keywords; `str` renders one with its colon, which is
+;; sliced off. One conversion, in one place.
+(define (json-key-string k)
+  (let s (str k)
+    (string-slice s 1 (string-length s))))
+
+(define (json-emit-pairs v keys i acc)
+  (if (>= i (length keys))
+    acc
+    (let k (json-key-string (get keys i))
+      (json-emit-pairs v keys (+ i 1)
+        (array-push! acc (string-append (json-emit-string k)
+                           (string-append ":" (json-emit (get v k)))))))))
+
+(define (json-emit-object v)
+  (string-append "{" (string-append (string-join (json-emit-pairs v (table-keys v) 0 (vector)) ",") "}")))
+
+;; Emitting a non-JSON value is a caller bug, not a parse failure, so it
+;; raises: `err` is for inputs the world handed us, `raise` is for contracts
+;; we broke ourselves.
+(define (json-emit v)
+  (cond [(string? v) (json-emit-string v)]
+        [(integer? v) (number->string v)]
+        [(float? v) (number->string v)]
+        [(boolean? v) (if v "true" "false")]
+        [(nil? v) "null"]
+        [(vector? v) (json-emit-array v)]
+        [(table? v) (json-emit-object v)]
+        [else (raise (error "json-emit: cannot encode ~a" v))]))
+
+;; --- self tests ---
+
+(assert (ok? (json-parse "null")) "null parses")
+(assert (nil? (ok-value (json-parse "null"))) "null is nil")
+(assert (= (ok-value (json-parse "true")) #t) "true parses")
+(assert (= (ok-value (json-parse "false")) #f) "false parses")
+(assert (= (ok-value (json-parse "42")) 42) "int parses")
+(assert (= (ok-value (json-parse "-3.5")) -3.5) "float parses")
+(assert (= (ok-value (json-parse "1e3")) 1000.0) "exponent parses")
+(assert (= (ok-value (json-parse "\"hi\"")) "hi") "string parses")
+(assert (= (ok-value (json-parse "\"a\\nb\"")) "a\nb") "newline escape")
+(assert (= (ok-value (json-parse "\"\\u0041\"")) "A") "unicode escape")
+(assert (= (ok-value (json-parse "\"\\b\\f\"")) (string-append (code->string 8) (code->string 12))) "short escapes")
+
+(let arr (ok-value (json-parse "[1, \"two\", [3], {\"k\": true}, null]"))
+  (assert (= (length arr) 5) "array length")
+  (assert (= (get arr 0) 1) "array int")
+  (assert (= (get arr 1) "two") "array string")
+  (assert (= (get (get arr 2) 0) 3) "nested array")
+  (assert (= (get (get arr 3) "k") #t) "nested object")
+  (assert (nil? (get arr 4)) "array null"))
+
+(let o (ok-value (json-parse "{\"a\": 1, \"b\": [1, 2]}"))
+  (assert (= (get o "a") 1) "object int")
+  (assert (= (get (get o "b") 1) 2) "object array"))
+
+(assert (err? (json-parse "")) "empty is an error")
+(assert (err? (json-parse "{")) "unclosed object")
+(assert (err? (json-parse "[1,")) "unclosed array")
+(assert (err? (json-parse "{\"a\"}")) "missing colon")
+(assert (err? (json-parse "{\"a\":1,}")) "trailing comma in object")
+(assert (err? (json-parse "[1,]")) "trailing comma in array")
+(assert (err? (json-parse "[1 2]")) "missing comma")
+(assert (err? (json-parse "01")) "leading zero")
+(assert (err? (json-parse "1.")) "bare decimal point")
+(assert (err? (json-parse "\"\\x\"")) "bad escape")
+(assert (err? (json-parse "\"abc")) "unterminated string")
+(assert (err? (json-parse "nul")) "bad literal")
+(assert (err? (json-parse "1 2")) "trailing garbage")
+(assert (err? (json-parse "{1: 2}")) "non-string key")
+
+(assert (= (json-emit nil) "null") "emit null")
+(assert (= (json-emit #t) "true") "emit true")
+(assert (= (json-emit 42) "42") "emit int")
+(assert (= (json-emit "a\"b\\c") "\"a\\\"b\\\\c\"") "emit escapes")
+(assert (= (json-emit (ok-value (json-parse "{\"a\":1}"))) "{\"a\":1}") "emit object")
+(assert (= (json-emit (ok-value (json-parse "[1,[2]]"))) "[1,[2]]") "emit array")
+
+(let rt (ok-value (json-parse (json-emit (ok-value (json-parse "{\"a\":[1,true,null],\"b\":{}}")))))
+  (assert (= (get (get rt "a") 1) #t) "round trip array bool")
+  (assert (nil? (get (get rt "a") 2)) "round trip array null")
+  (assert (= (length (table-keys (get rt "b"))) 0) "round trip empty object"))
+
+(print "json ok")

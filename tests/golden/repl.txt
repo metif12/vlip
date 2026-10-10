@@ -1,11 +1,11 @@
-vlip 0.1.0 -- ,h for commands, ,q to leave
-vlip:1> vlip:2> greet
-vlip:1> "hello, world"
-vlip:1> error: car: car expects a pair, got 1
-vlip:1> "hello, again"
-vlip:1> error: failed to open file "no-such-file.vl"
-vlip:1> "hello, still here"
-vlip:1> vlip:2> "a string\nthat spans two lines"
+blip 0.1.0 -- ,h for commands, ,q to leave
+blip:1> blip:2> greet
+blip:1> "hello, world"
+blip:1> error: car: car expects a pair, got 1
+blip:1> "hello, again"
+blip:1> error: failed to open file "no-such-file.vl"
+blip:1> "hello, still here"
+blip:1> blip:2> "a string\nthat spans two lines"
 nil
-vlip:1> "\"quoted here\""
-vlip:1> vlip:1> 
+blip:1> "\"quoted here\""
+blip:1> blip:1> 

@@ -8,7 +8,7 @@
   "ui.tryIt": "Lees de documentatie",
   "ui.source": "Broncode",
   "ui.untranslated": "Dit onderdeel is nog niet in uw taal vertaald en wordt in het Engels getoond. Vertalingen zijn welkom.",
-  "ui.footer": "vlip is een Lisp-dialect geschreven in V. vroeg, en eerlijk over wat er nog niet werkt.",
+  "ui.footer": "blip is een Lisp-dialect geschreven in V. vroeg, en eerlijk over wat er nog niet werkt.",
   "home.title": "Een Lisp voor V, met staartaanroepen die echt gratis zijn",
   "home.sub": "Een klein Lisp-dialect op een expliciete CEK-machine. Een aanroep in staartpositie hergebruikt zijn frame in plaats van er een te stapelen, dus een lus is een lus en geen stapel die groeit tot hij sterft.",
   "home.pillars": "Wat het is",

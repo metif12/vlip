@@ -8,7 +8,7 @@
   "ui.tryIt": "Leer la documentacion",
   "ui.source": "Codigo",
   "ui.untranslated": "Esta seccion aun no esta traducida a tu idioma; se muestra en ingles. Las traducciones son bienvenidas.",
-  "ui.footer": "vlip es un dialecto de Lisp implementado en V. Temprano, y honesto sobre lo que aun no funciona.",
+  "ui.footer": "blip es un dialecto de Lisp implementado en V. Temprano, y honesto sobre lo que aun no funciona.",
   "home.title": "Un Lisp para V, con llamadas de cola que de verdad son gratis",
   "home.sub": "Un pequeno dialecto de Lisp sobre una maquina CEK explicita. Una llamada en posicion de cola reutiliza su marco en vez de apilar otro, asi que un bucle es un bucle y no una pila que crece hasta morir.",
   "home.pillars": "Que es",

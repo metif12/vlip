@@ -99,6 +99,8 @@ pub mut:
 	den   i64    // rational denominator
 	start i32    // children range into Arena.children
 	count i32
+	line  int
+	col   int
 }
 
 pub struct Arena {
@@ -189,6 +191,12 @@ pub fn (mut a Arena) add_child(parent NodeId, child NodeId) {
 
 pub fn (a &Arena) node(id NodeId) &Datum {
 	return &a.nodes[int(id)]
+}
+
+pub fn (mut a Arena) set_pos(id NodeId, line int, col int) {
+	mut node := &a.nodes[int(id)]
+	node.line = line
+	node.col = col
 }
 
 // kids returns a COPY of a node's children.
@@ -341,12 +349,24 @@ mut depth := 1
 }
 
 // read returns the next form's NodeId, or none at end of input.
+//
+// It wraps read_inner with position tracking: the line and column of the first
+// byte of the form are recorded on the node, so an error message can later show
+// where in the source the form was written.
 pub fn (mut r Reader) read() ?NodeId {
 	r.skip_ws()
 	if r.eof() {
 		return none
 	}
-c := r.peek()
+	line := r.line
+	col := r.off - r.line_at + 1
+	id := r.read_inner() or { return none }
+	r.arena.set_pos(id, line, col)
+	return id
+}
+
+fn (mut r Reader) read_inner() ?NodeId {
+	c := r.peek()
 	match c {
 		lparen {
 			r.next()

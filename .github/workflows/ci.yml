@@ -18,7 +18,7 @@ env:
 
   # On macOS, Linux and BSD `v` tries its experimental V3 compiler first and
   # silently falls back to the established one when V3 declines the program. The
-  # two resolve `import vlib.vlip.reader` differently -- the established one
+  # two resolve `import vlib.blip.reader` differently -- the established one
   # looks in V's standard library and reports every module here as unknown --
   # so the fallback turned a working build into a wall of "unknown function"
   # errors naming files that exist and compile locally.
@@ -61,11 +61,17 @@ jobs:
           v version
           gcc --version | head -n 1
 
+      # The generated prims must match the compiler they were read from. A
+      # V_COMMIT bump that changes vlib fails here until tools/genprims.vsh
+      # is re-run and the result reviewed -- see docs/010-roadmap.md 7.1.
+      - name: Generated prims are current
+        run: v -cc gcc run tools/genprims.vsh --check
+
       # `-cc gcc` everywhere, matching the local build commands in the README.
       # The default C backend fails on this checkout.
       - name: Build everything
         run: |
-          v -cc gcc -o vlip vlip.v
+          v -cc gcc -o blip blip.v
           v -cc gcc -o reader_probe reader_probe.v
           v -cc gcc -o tail tests/tail_calls.v
           v -cc gcc -o non_tail tests/non_tail.v
@@ -74,6 +80,8 @@ jobs:
           v -cc gcc -o embedding tests/embedding.v
           v -cc gcc -o repl_golden tests/repl_golden.v
           v -cc gcc -o examples_run tests/examples_run.v
+          v -cc gcc -o programs_run tests/programs_run.v
+          v -cc gcc -o genprims tests/genprims.v
 
       # These runners print results and do not set an exit code yet, so the
       # output is checked rather than the status. That is listed as a known gap
@@ -88,6 +96,8 @@ jobs:
           ./embedding      | tee -a out.txt
           ./repl_golden    | tee -a out.txt
           ./examples_run   | tee -a out.txt
+          ./programs_run   | tee -a out.txt
+          ./genprims       | tee -a out.txt
           if grep -qE '^FAIL|panic' out.txt; then
             echo "::error::a check failed or the machine panicked"
             exit 1

@@ -31,10 +31,10 @@ module main
  * the note in tests/tail_calls.v) and hide the actual assertion.
  */
 
-import vlib.vlip
-import vlib.vlip.machine
-import vlib.vlip.printer
-import vlib.vlip.reader
+import vlib.blip
+import vlib.blip.machine
+import vlib.blip.printer
+import vlib.blip.reader
 
 // Suite exists only because V script mode requires every definition to precede
 // every statement, so a module-level `mut fails := 0` would push the functions

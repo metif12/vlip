@@ -8,7 +8,7 @@
   "ui.tryIt": "Ler a documentacao",
   "ui.source": "Codigo",
   "ui.untranslated": "Esta secao ainda nao foi traduzida para o seu idioma e aparece em ingles. Traducoes sao bem-vindas.",
-  "ui.footer": "vlip e um dialeto de Lisp implementado em V. Inicial, e honesto sobre o que ainda nao funciona.",
+  "ui.footer": "blip e um dialeto de Lisp implementado em V. Inicial, e honesto sobre o que ainda nao funciona.",
   "home.title": "Um Lisp para V, com chamadas de cauda que sao mesmo de graca",
   "home.sub": "Um pequeno dialeto de Lisp sobre uma maquina CEK explicita. Uma chamada em posicao de cauda reaproveita seu quadro em vez de empilhar outro, entao um laco e um laco, e nao uma pilha que cresce ate morrer.",
   "home.pillars": "O que e",

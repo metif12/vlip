@@ -1,6 +1,6 @@
 module main
 
-import vlip
+import blip
 
 // Regression probe for the `Value` payload representation.
 //
@@ -17,15 +17,15 @@ import vlip
 
 const n = 2_000_000
 
-fn build() vlip.Value {
-	mut lst := vlip.nil()
+fn build() blip.Value {
+	mut lst := blip.nil()
 	for i in 0 .. n {
-		lst = vlip.cons(vlip.integer(i64(i)), lst)
+		lst = blip.cons(blip.integer(i64(i)), lst)
 	}
 	return lst
 }
 
-fn walk(root vlip.Value) i64 {
+fn walk(root blip.Value) i64 {
 	mut s := i64(0)
 	mut cur := root
 	mut steps := 0

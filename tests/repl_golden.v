@@ -22,9 +22,9 @@ module main
  */
 
 import os
-import vlib.vlip
-import vlib.vlip.host
-import vlib.vlip.repl
+import vlib.blip
+import vlib.blip.host
+import vlib.blip.repl
 
 struct Suite {
 mut:
@@ -53,9 +53,9 @@ fn repo_root() string {
 }
 
 $if windows {
-	const exe_name = 'vlip.exe'
+	const exe_name = 'blip.exe'
 } $else {
-	const exe_name = 'vlip'
+	const exe_name = 'blip'
 }
 
 fn prompt_for(buffer string) string {
@@ -173,14 +173,14 @@ fn (mut s Suite) quit_stops_reading() bool {
 
 fn (mut s Suite) the_prompt_shows_the_depth() bool {
 	cases := [
-		['(+ 1 2)', 'vlip:1> '],
-		['(define (f x)', 'vlip:2> '],
-		['(+ 1', 'vlip:2> '],
-		['(print "a string', 'vlip:2> '],
-		['"a string', 'vlip"> '],
-		['(print "a string")', 'vlip:1> '],
-		['; a comment with ( in it', 'vlip:1> '],
-		['#| a block ( comment |#', 'vlip:1> '],
+		['(+ 1 2)', 'blip:1> '],
+		['(define (f x)', 'blip:2> '],
+		['(+ 1', 'blip:2> '],
+		['(print "a string', 'blip:2> '],
+		['"a string', 'blip"> '],
+		['(print "a string")', 'blip:1> '],
+		['; a comment with ( in it', 'blip:1> '],
+		['#| a block ( comment |#', 'blip:1> '],
 	]
 	mut bad := ''
 	for c in cases {
@@ -199,12 +199,12 @@ fn (mut s Suite) golden_stdin_to_stdout() bool {
 	root := repo_root()
 	exe := os.join_path(root, exe_name)
 	if !os.exists(exe) {
-		s.fail('golden stdin to stdout', 'no ${exe}; build it first with `v -cc gcc -o ${exe_name} vlip.v`')
+		s.fail('golden stdin to stdout', 'no ${exe}; build it first with `v -cc gcc -o ${exe_name} blip.v`')
 		return false
 	}
 	tmp := os.vtmp_dir()
-	script := os.join_path(tmp, 'vlip_repl_in.txt')
-	got := os.join_path(tmp, 'vlip_repl_out.txt')
+	script := os.join_path(tmp, 'blip_repl_in.txt')
+	got := os.join_path(tmp, 'blip_repl_out.txt')
 	want_path := os.join_path(os.dir(@FILE), 'golden${os.path_separator}repl.txt')
 
 	// The input is written here rather than checked in, because it is also the
