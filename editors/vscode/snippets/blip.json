@@ -1,0 +1,147 @@
+{
+	"define": {
+		"prefix": "define",
+		"body": ["(define ${1:name} ${2:value})"],
+		"description": "Bind a name to a value."
+	},
+	"define-fn": {
+		"prefix": "define-fn",
+		"body": ["(define (${1:name} ${2:args})", "\t$0)"],
+		"description": "Define a function: define with a parameter list in the name slot."
+	},
+	"fn": {
+		"prefix": "fn",
+		"body": ["(fn [${1:args}] ${2:body})"],
+		"description": "Anonymous function with bracketed parameters."
+	},
+	"lambda": {
+		"prefix": "lambda",
+		"body": ["(lambda (${1:args}) ${2:body})"],
+		"description": "Anonymous function with parenthesised parameters."
+	},
+	"if": {
+		"prefix": "if",
+		"body": ["(if ${1:test}", "\t${2:then}", "\t${3:else})"],
+		"description": "Conditional. Only #f is false."
+	},
+	"when": {
+		"prefix": "when",
+		"body": ["(when ${1:test}", "\t$0)"],
+		"description": "One-sided conditional."
+	},
+	"unless": {
+		"prefix": "unless",
+		"body": ["(unless ${1:test}", "\t$0)"],
+		"description": "The other one-sided conditional."
+	},
+	"cond": {
+		"prefix": "cond",
+		"body": ["(cond [${1:test} ${2:result}]", "\t[else $0])"],
+		"description": "Test-and-result chain."
+	},
+	"case": {
+		"prefix": "case",
+		"body": ["(case ${1:subject}", "\t[(${2:values}) ${3:result}]", "\t[else $0])"],
+		"description": "Dispatch on a value, comparing with =."
+	},
+	"and": {
+		"prefix": "and",
+		"body": ["(and $0)"],
+		"description": "Returns the deciding value, not a boolean."
+	},
+	"or": {
+		"prefix": "or",
+		"body": ["(or $0)"],
+		"description": "Returns the deciding value, not a boolean."
+	},
+	"let": {
+		"prefix": "let",
+		"body": ["(let ([${1:name} ${2:value}])", "\t$0)"],
+		"description": "Parallel bindings. Each value is evaluated in the enclosing scope."
+	},
+	"let*": {
+		"prefix": "let*",
+		"body": ["(let* ([${1:name} ${2:value}])", "\t$0)"],
+		"description": "Sequential bindings. Each value sees the names before it."
+	},
+	"letrec": {
+		"prefix": "letrec",
+		"body": ["(letrec ([${1:name} (lambda (${2:args}) ${3:body})])", "\t$0)"],
+		"description": "Mutually visible bindings, for recursive closures."
+	},
+	"loop": {
+		"prefix": "loop",
+		"body": ["(loop ${1:i} ${2:0} (< ${1:i} ${3:n})", "\t$0)"],
+		"description": "Named let with a counter that advances by one."
+	},
+	"dotimes": {
+		"prefix": "dotimes",
+		"body": ["(dotimes ${1:i} ${2:n}", "\t$0)"],
+		"description": "Count from zero to n - 1."
+	},
+	"begin": {
+		"prefix": "begin",
+		"body": ["(begin", "\t$0)"],
+		"description": "Sequence. The last form decides the value."
+	},
+	"use": {
+		"prefix": "use",
+		"body": ["(use (${1:call})", "\t$0)"],
+		"description": "Bind the results of one call, then run the body at the same indentation."
+	},
+	"match": {
+		"prefix": "match",
+		"body": ["(match ${1:subject}", "\t[${2:pattern} ${3:result}]", "\t[_ $0])"],
+		"description": "Pattern match one subject. _ matches without binding, else matches everything."
+	},
+	"match*": {
+		"prefix": "match*",
+		"body": ["(match* (list ${1:a} ${2:b})", "\t[(${3:pattern-a} ${4:pattern-b}) ${5:result}]", "\t[(_ _) $0])"],
+		"description": "Match several subjects at once. A clause is tried only when every pattern matches."
+	},
+	"let-assert": {
+		"prefix": "let-assert",
+		"body": ["(let assert [${1:pattern} ${2:value}]", "\t$0)"],
+		"description": "Match a value or fail loudly, naming the pattern."
+	},
+	"try": {
+		"prefix": "try",
+		"body": ["(try ${1:body}", "\t#:catch [(err ${2:e}) ${3:handler}]", "\t#:finally [${4:cleanup}])"],
+		"description": "Run a body, catch a raised error, and always run the finally body."
+	},
+	"struct": {
+		"prefix": "struct",
+		"body": ["(struct ${1:Name} (${2:fields}))"],
+		"description": "Define a struct. Gives a constructor named after it, a lowercased-name? predicate, and one lowercased-name-field accessor per field."
+	},
+	"define-macro": {
+		"prefix": "defmacro",
+		"body": ["(defmacro ${1:name} (${2:args})", "\t$0)"],
+		"description": "Define a macro. Parameters bind to the unevaluated argument forms."
+	},
+	"assert": {
+		"prefix": "assert",
+		"body": ["(assert ${1:test} \"${2:what it promises}\")"],
+		"description": "Executable documentation. The message is required."
+	},
+	"require": {
+		"prefix": "require",
+		"body": ["(require \"${1:module.lip}\")"],
+		"description": "Load another file into this machine."
+	},
+	"provide": {
+		"prefix": "provide",
+		"body": ["(provide", "\t$0)"],
+		"description": "Document a module's interface."
+	},
+	"pipe-first": {
+		"prefix": "pipe-first",
+		"body": ["(-> ${1:value}", "\t$0)"],
+		"description": "Thread a value into the first argument of each form."
+	},
+	"pipe-last": {
+		"prefix": "pipe-last",
+		"body": ["(->> ${1:value}", "\t$0)"],
+		"description": "Thread a value into the last argument of each form."
+	}
+}

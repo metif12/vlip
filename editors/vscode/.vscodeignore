@@ -1,0 +1,23 @@
+.vscode/**
+.vscode-test/**
+
+# Node / npm
+node_modules/
+package-lock.json
+
+# Source and build outputs
+src/
+out/test/**
+
+# TypeScript build artifacts
+tsconfig.json
+tsconfig.*.json
+tsconfig.tsbuildinfo
+
+# Packaging
+*.vsix
+*.log
+
+# Repo metadata that does not belong in the package
+.gitignore
+.github/**

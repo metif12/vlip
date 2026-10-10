@@ -1,0 +1,90 @@
+{
+	"name": "vscode-blip",
+	"displayName": "blip",
+	"description": "blip language support for Visual Studio Code: syntax highlighting, snippets, and reader diagnostics from the blip language server.",
+	"version": "0.1.0",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.105.0"
+	},
+	"categories": [
+		"Programming Languages"
+	],
+	"keywords": [
+		"blip",
+		"lisp",
+		"scheme",
+		"s-expressions"
+	],
+	"activationEvents": [
+		"onLanguage:blip"
+	],
+	"main": "./out/extension.js",
+	"contributes": {
+		"languages": [
+			{
+				"id": "blip",
+				"aliases": [
+					"Blip"
+				],
+				"extensions": [
+					".lip"
+				],
+				"configuration": "./language-configuration.json"
+			}
+		],
+		"grammars": [
+			{
+				"language": "blip",
+				"scopeName": "source.blip",
+				"path": "./syntaxes/blip.tmLanguage.json"
+			}
+		],
+		"snippets": [
+			{
+				"language": "blip",
+				"path": "./snippets/blip.json"
+			}
+		],
+		"configuration": {
+			"type": "object",
+			"title": "blip",
+			"properties": {
+				"blip.server.command": {
+					"type": "string",
+					"default": "blip",
+					"description": "Path or command name of the blip executable. The language server is its `lsp` subcommand, so the executable must be on PATH or given as an absolute path."
+				},
+				"blip.server.args": {
+					"type": "array",
+					"default": [
+						"lsp"
+					],
+					"items": {
+						"type": "string"
+					},
+					"description": "Arguments passed to the blip executable."
+				}
+			}
+		},
+		"commands": [
+			{
+				"command": "blip.restartServer",
+				"title": "Restart blip Language Server",
+				"category": "blip"
+			}
+		]
+	},
+	"scripts": {
+		"compile": "tsc -p .",
+		"watch": "tsc -p . --watch"
+	},
+	"dependencies": {
+		"vscode-languageclient": "10.1.0"
+	},
+	"devDependencies": {
+		"@types/node": "24",
+		"@types/vscode": "1.105.0",
+		"typescript": "^5.9.3"
+	}
+}

@@ -32,3 +32,6 @@ tools/*.exe
 SHA256SUMS
 dist/
 
+# Installed packages: recorded in blip.lock, restored by `blip pkg install`.
+blip_modules/
+

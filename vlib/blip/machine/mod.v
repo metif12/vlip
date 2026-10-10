@@ -25,6 +25,7 @@ module machine
 // Kont is one tagged struct rather than a sum type, because V 0.5.2 cannot
 // initialise a sum-type variant field from a local. See vlib/blip/mod.v.
 
+import os
 import strconv
 import vlib.blip
 import vlib.blip.host
@@ -203,6 +204,67 @@ pub fn (mut m Machine) load(path string) !blip.Value {
 	out := m.run_checked(res)!
 	m.source = prev
 	return out
+}
+
+// resolve_module maps a package name to the file that implements it.
+//
+// `owner/repo` is looked up directly, because that is what `blip pkg install`
+// records and it is unambiguous. A bare `repo` is searched across owners, which
+// is a convenience with exactly one failure mode: two owners publishing the same
+// repo name, where the one found is whichever os.ls happens to return first.
+// That ambiguity is why the direct form is the one worth using.
+fn (m &Machine) resolve_module(name string) ?string {
+	if name == '' {
+		return none
+	}
+	base := 'blip_modules'
+	direct := os.join_path(os.join_path(base, name), 'blip.lip')
+	if os.exists(direct) {
+		return direct
+	}
+	if name.contains('/') {
+		return none
+	}
+	entries := os.ls(base) or { return none }
+	for owner in entries {
+		if owner.starts_with('.') {
+			continue
+		}
+		candidate := os.join_path(os.join_path(base, owner), name)
+		if !os.is_dir(candidate) {
+			continue
+		}
+		entry := os.join_path(candidate, 'blip.lip')
+		if os.exists(entry) {
+			return entry
+		}
+	}
+	return none
+}
+
+// eval_import loads an installed package into the RUNNING machine.
+//
+// The same machine, not a fresh one: definitions cannot cross into a second
+// machine, so importing into a separate one would leave every name in the
+// package unbound at the call site.
+fn (mut m Machine) eval_import(kids []blip.NodeId) ! {
+	if kids.len < 2 {
+		return error('import needs a package name: (import owner/repo)')
+	}
+	d := m.arena.node(kids[1])
+	name := d.value.trim_space()
+	if name == '' {
+		return error('import needs a package name: (import owner/repo)')
+	}
+	path := m.resolve_module(name) or {
+		hint := if name.contains('/') {
+			'is it installed? `blip pkg install ${name}`'
+		} else {
+			'is it installed? `blip pkg list`'
+		}
+		return error('import: no package named ${name} -- ${hint}')
+	}
+	m.load(path)!
 }
 
 // where labels the current source for an error message.
@@ -1698,7 +1760,7 @@ k := m.kstack[idx]
 // ------------------------------------------------------------ special forms
 
 pub fn special_form(name string) bool {
-	return name in ['quote', 'if', 'define', 'set!', 'lambda', 'fn', 'begin', 'let', 'let*', 'letrec', 'and', 'or', 'when', 'unless', 'cond', 'case', 'loop', 'dotimes', 'use', 'match', 'match*', 'struct', 'struct-out', 'provide', 'require', 'let-assert', 'do', 'time', 'assert', '->', '->>', '|>', 'as->', 'cond->', 'def', 'defmacro', 'try', 'macex', 'macex1']
+	return name in ['quote', 'if', 'define', 'set!', 'lambda', 'fn', 'begin', 'let', 'let*', 'letrec', 'and', 'or', 'when', 'unless', 'cond', 'case', 'loop', 'dotimes', 'use', 'match', 'match*', 'import', 'struct', 'struct-out', 'provide', 'require', 'let-assert', 'do', 'time', 'assert', '->', '->>', '|>', 'as->', 'cond->', 'def', 'defmacro', 'try', 'macex', 'macex1']
 }
 
 fn (mut m Machine) eval_special(name string, id blip.NodeId, kids []blip.NodeId) ! {
@@ -1858,6 +1920,9 @@ mut nf := m.kont(.set_k)
 		}
 		'use' {
 			return m.eval_use(kids)
+		}
+		'import' {
+			return m.eval_import(kids)
 		}
 		'try' {
 			return m.eval_try(kids)

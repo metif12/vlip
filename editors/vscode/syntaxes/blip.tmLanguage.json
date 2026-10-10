@@ -1,0 +1,141 @@
+{
+	"name": "blip",
+	"scopeName": "source.blip",
+	"fileTypes": [".lip"],
+	"patterns": [
+		{ "include": "#comment-line" },
+		{ "include": "#comment-block" },
+		{ "include": "#string" },
+		{ "include": "#keyword-symbol" },
+		{ "include": "#character" },
+		{ "include": "#constant" },
+		{ "include": "#bytes" },
+		{ "include": "#number" },
+		{ "include": "#bar-symbol" },
+		{ "include": "#bar-operator" },
+		{ "include": "#quote" },
+		{ "include": "#quasi" },
+		{ "include": "#unquote" },
+		{ "include": "#mutable" },
+		{ "include": "#keyword" },
+		{ "include": "#keyword-operator" },
+		{ "include": "#variable" }
+	],
+	"repository": {
+		"comment-line": {
+			"name": "comment.line.semicolon.blip",
+			"match": ";.*$"
+		},
+		"comment-block": {
+			"name": "comment.block.blip",
+			"begin": "#\\|",
+			"beginCaptures": {
+				"0": { "name": "punctuation.definition.comment.begin.blip" }
+			},
+			"end": "\\|#",
+			"endCaptures": {
+				"0": { "name": "punctuation.definition.comment.end.blip" }
+			},
+			"patterns": [
+				{ "include": "#comment-block" }
+			]
+		},
+		"string": {
+			"name": "string.quoted.double.blip",
+			"begin": "\"",
+			"beginCaptures": {
+				"0": { "name": "punctuation.definition.string.begin.blip" }
+			},
+			"end": "\"",
+			"endCaptures": {
+				"0": { "name": "punctuation.definition.string.end.blip" }
+			},
+			"patterns": [
+				{
+					"name": "constant.character.escape.blip",
+					"match": "\\\\[ntr0\\\\\"]"
+				}
+			]
+		},
+		"keyword-symbol": {
+			"name": "constant.other.keyword.blip",
+			"match": "(?:#)?:[^\\s()\\[\\]{}\";]*"
+		},
+		"character": {
+			"name": "constant.character.blip",
+			"match": "#\\\\(?:newline|linefeed|carriage-return|backspace|escape|return|space|null|nul|alpha|tab|x[0-9a-fA-F]+|X[0-9a-fA-F]+|[ntr0]|[^\\s()\\[\\]{}\";])"
+		},
+		"constant": {
+			"patterns": [
+				{
+					"name": "constant.language.boolean.blip",
+					"match": "#[tf]"
+				},
+				{
+					"name": "constant.language.nil.blip",
+					"match": "nil(?![^\\s()\\[\\]{}\";])"
+				}
+			]
+		},
+		"bytes": {
+			"name": "punctuation.definition.bytes.begin.blip",
+			"match": "#\\("
+		},
+		"number": {
+			"name": "constant.numeric.blip",
+			"match": "[+-]?(?:[0-9]+/[0-9]+|0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?)(?![^\\s()\\[\\]{}\";])"
+		},
+		"bar-symbol": {
+			"name": "meta.symbol.bar.blip",
+			"contentName": "variable.other.symbol.blip",
+			"begin": "\\|(?=[\\s()\\[\\]{}]|$)",
+			"beginCaptures": {
+				"0": { "name": "punctuation.definition.symbol.begin.blip" }
+			},
+			"end": "\\|",
+			"endCaptures": {
+				"0": { "name": "punctuation.definition.symbol.end.blip" }
+			}
+		},
+		"bar-operator": {
+			"name": "variable.other.symbol.operator.blip",
+			"match": "\\|[^\\s()\\[\\]{}]*"
+		},
+		"quote": {
+			"name": "punctuation.definition.quote.blip",
+			"match": "'"
+		},
+		"quasi": {
+			"name": "punctuation.definition.quasi-quote.blip",
+			"match": "`"
+		},
+		"unquote": {
+			"name": "punctuation.definition.unquote.blip",
+			"match": ",@?"
+		},
+		"mutable": {
+			"name": "keyword.operator.mutable.blip",
+			"match": "@(?=[(\\[{])"
+		},
+		"keyword": {
+			"name": "meta.special-form.blip",
+			"match": "(\\()([ \\t]*)(quote|if|define|defmacro|def|set!|lambda|fn|begin|let\\*|let|letrec|and|or|when|unless|cond|case|loop|dotimes|use|match\\*|match|struct-out|struct|provide|require|do|time|assert|try|macex1|macex)(?=[\\s()\\[\\]{}\"]|$)",
+			"captures": {
+				"1": { "name": "punctuation.section.expression.begin.blip" },
+				"3": { "name": "keyword.control.blip" }
+			}
+		},
+		"keyword-operator": {
+			"name": "meta.special-form.blip",
+			"match": "(\\()([ \\t]*)(->>|->|as->|cond->|\\|>)(?=[\\s()\\[\\]{}\"]|$)",
+			"captures": {
+				"1": { "name": "punctuation.section.expression.begin.blip" },
+				"3": { "name": "keyword.operator.blip" }
+			}
+		},
+		"variable": {
+			"name": "variable.other.symbol.blip",
+			"match": "[^\\s()\\[\\]{}\";]+"
+		}
+	}
+}
